@@ -44,11 +44,17 @@ fn test_get_price_multiple_assets() {
     let env = Env::default();
     let contract_id = env.register(PriceOracle, ());
     let client = PriceOracleClient::new(&env, &contract_id);
-    let xlm_asset = symbol_short!("XLM");
-    let btc_asset = symbol_short!("BTC");
+    let ngn = symbol_short!("NGN");
+    let kes = symbol_short!("KES");
 
-    client.set_price(&xlm_asset, &1_000_000_i128);
-    client.set_price(&btc_asset, &50_000_000_000_i128);
+    client
+        .try_set_price(&ngn, &1_000_000_i128)
+        .unwrap()
+        .unwrap();
+    client
+        .try_set_price(&kes, &50_000_000_000_i128)
+        .unwrap()
+        .unwrap();
 
     assert_eq!(
         client.try_get_price(&xlm_asset).unwrap().unwrap().price,
@@ -69,7 +75,10 @@ fn test_get_price_after_update() {
 
     env.ledger().set_timestamp(1_234_567_890);
     env.ledger().set_sequence_number(1);
-    client.set_price(&asset, &1_000_000_i128);
+    client
+        .try_set_price(&asset, &1_000_000_i128)
+        .unwrap()
+        .unwrap();
 
     let initial = client.try_get_price(&asset).unwrap().unwrap();
     assert_eq!(initial.price, 1_000_000_i128);
@@ -77,7 +86,10 @@ fn test_get_price_after_update() {
 
     env.ledger().set_timestamp(1_234_567_900);
     env.ledger().set_sequence_number(2);
-    client.set_price(&asset, &1_200_000_i128);
+    client
+        .try_set_price(&asset, &1_200_000_i128)
+        .unwrap()
+        .unwrap();
 
     let updated = client.try_get_price(&asset).unwrap().unwrap();
     assert_eq!(updated.price, 1_200_000_i128);
@@ -171,6 +183,29 @@ fn test_update_price_unauthorized_rejection() {
 }
 
 #[test]
+fn test_update_price_rejects_unapproved_symbol() {
+    let env = Env::default();
+    let contract_id = env.register(PriceOracle, ());
+    let client = PriceOracleClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let provider = Address::generate(&env);
+
+    env.as_contract(&contract_id, || {
+        crate::auth::_set_admin(&env, &admin);
+        crate::auth::_add_provider(&env, &provider);
+    });
+
+    let asset = symbol_short!("ETH");
+    let price: i128 = 1_000_000;
+
+    match client.try_update_price(&provider, &asset, &price) {
+        Err(Ok(e)) => assert_eq!(e, Error::InvalidAssetSymbol),
+        other => panic!("expected InvalidAssetSymbol, got {:?}", other),
+    }
+}
+
+#[test]
 fn test_update_price_multiple_updates() {
     let env = Env::default();
     env.mock_all_auths();
@@ -226,4 +261,31 @@ fn test_calculate_percentage_difference_bps_is_absolute() {
 fn test_calculate_percentage_change_returns_none_for_zero_baseline() {
     assert_eq!(calculate_percentage_change_bps(0, 1_000_000), None);
     assert_eq!(calculate_percentage_difference_bps(0, 1_000_000), None);
+}
+
+#[test]
+fn test_is_timestamp_stale_returns_true_after_24_hours() {
+    let (env, client) = setup();
+    env.ledger().set_timestamp(1_700_086_401);
+    env.ledger().set_sequence_number(1);
+
+    assert!(client.is_timestamp_stale(&1_700_000_000));
+}
+
+#[test]
+fn test_is_timestamp_stale_returns_false_at_24_hour_boundary() {
+    let (env, client) = setup();
+    env.ledger().set_timestamp(1_700_086_400);
+    env.ledger().set_sequence_number(1);
+
+    assert!(!client.is_timestamp_stale(&1_700_000_000));
+}
+
+#[test]
+fn test_is_timestamp_stale_returns_false_for_future_timestamp() {
+    let (env, client) = setup();
+    env.ledger().set_timestamp(1_700_000_000);
+    env.ledger().set_sequence_number(1);
+
+    assert!(!client.is_timestamp_stale(&1_700_000_100));
 }

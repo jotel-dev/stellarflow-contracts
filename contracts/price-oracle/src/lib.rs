@@ -17,6 +17,8 @@ pub enum Error {
     AssetNotFound = 1,
     /// Unauthorized caller - not a whitelisted provider.
     Unauthorized = 2,
+    /// Asset symbol is not in the approved list (NGN, KES, GHS)
+    InvalidAssetSymbol = 3,
 }
 
 /// Price data structure containing price information for an asset.
@@ -117,6 +119,7 @@ impl PriceOracle {
 
         prices.set(asset, price_data);
         storage.set(&PRICE_DATA_KEY, &prices);
+        Ok(())
     }
 
     /// Update the price for a specific asset after provider auth.
@@ -149,6 +152,7 @@ impl PriceOracle {
     }
 }
 
+mod asset_symbol;
 mod auth;
 mod median;
 mod test;
