@@ -36,7 +36,6 @@ pub fn _is_admin(env: &Env, caller: &Address) -> bool {
         .unwrap_or(false) // no admin set → not an admin
 }
 
-
 pub fn _require_admin(env: &Env, caller: &Address) {
     if !_is_admin(env, caller) {
         panic!("Unauthorised: caller is not the admin");
