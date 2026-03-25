@@ -1,7 +1,7 @@
 #![no_std]
-use soroban_sdk::{contract, contracterror, contractimpl, contracttype, symbol_short, Env, Symbol};
 use soroban_sdk::{
-    contract, contracterror, contractevent, contractimpl, contracttype, symbol_short, Address, Env, Symbol,
+    contract, contracterror, contractevent, contractimpl, contracttype, symbol_short, Address, Env,
+    Symbol,
 };
 
 /// Error types for the price oracle contract
@@ -13,13 +13,15 @@ pub enum Error {
     AssetNotFound = 1,
     /// Unauthorized caller - not a whitelisted provider
     Unauthorized = 2,
+    /// Asset symbol is not in the approved list (NGN, KES, GHS)
+    InvalidAssetSymbol = 3,
 }
 
 /// Price data structure containing price information for an asset
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PriceData {
-    /// The asset symbol (e.g., "XLM", "BTC")
+    /// The asset symbol (approved: NGN, KES, GHS)
     pub asset: Symbol,
     /// The price value (stored as scaled integer, e.g., 1000000 = 1.00 USD)
     pub price: i128,
@@ -45,6 +47,11 @@ pub struct PriceOracle;
 
 #[contractimpl]
 impl PriceOracle {
+    /// Returns true if the symbol is approved for oracle prices (NGN, KES, GHS).
+    pub fn is_approved_asset(_env: Env, asset: Symbol) -> bool {
+        asset_symbol::is_approved_asset_symbol(asset)
+    }
+
     /// Get the price data for a specific asset
     ///
     /// # Arguments
@@ -96,11 +103,16 @@ impl PriceOracle {
     /// * `env` - The contract environment
     /// * `asset` - The asset symbol
     /// * `val` - The price value to store
-    pub fn set_price(env: Env, asset: Symbol, val: i128) {
-        // Get the persistent storage instance
+    ///
+    /// # Errors
+    /// * `Error::InvalidAssetSymbol` - If `asset` is not NGN, KES, or GHS
+    pub fn set_price(env: Env, asset: Symbol, val: i128) -> Result<(), Error> {
+        if !asset_symbol::is_approved_asset_symbol(asset.clone()) {
+            return Err(Error::InvalidAssetSymbol);
+        }
+
         let storage = env.storage().persistent();
 
-        // Get existing prices or create new map
         let mut prices: soroban_sdk::Map<Symbol, PriceData> = storage
             .get(&PRICE_DATA_KEY)
             .unwrap_or_else(|| soroban_sdk::Map::new(&env));
@@ -111,11 +123,9 @@ impl PriceOracle {
             timestamp: env.ledger().timestamp(),
         };
 
-        // Set the price for the asset
         prices.set(asset, price_data);
-
-        // Store the updated map
         storage.set(&PRICE_DATA_KEY, &prices);
+        Ok(())
     }
 
     /// Update the price for a specific asset (authorized backend relayer function)
@@ -125,50 +135,53 @@ impl PriceOracle {
     /// * `source` - The address of the authorized backend relayer
     /// * `asset` - The asset symbol to update
     /// * `price` - The new price (as i128)
-    pub fn update_price(env: Env, source: Address, asset: Symbol, price: i128) {
-        // Check if the source is a whitelisted provider
+    ///
+    /// # Errors
+    /// * `Error::InvalidAssetSymbol` - If `asset` is not NGN, KES, or GHS
+    ///
+    /// # Panics
+    /// If `source` is not a whitelisted provider.
+    pub fn update_price(env: Env, source: Address, asset: Symbol, price: i128) -> Result<(), Error> {
+        if !asset_symbol::is_approved_asset_symbol(asset.clone()) {
+            return Err(Error::InvalidAssetSymbol);
+        }
+
         if !crate::auth::_is_provider(&env, &source) {
             panic!("Unauthorised: caller is not a whitelisted provider");
         }
 
-        // Require authentication from the source address
         source.require_auth();
 
-        // Get the storage instance
         let storage = env.storage().instance();
 
-        // Get existing prices or create new map
         let mut prices: soroban_sdk::Map<Symbol, PriceData> = storage
             .get(&PRICE_DATA_KEY)
             .unwrap_or_else(|| soroban_sdk::Map::new(&env));
 
-        // Get current timestamp
         let timestamp = env.ledger().timestamp();
 
-        // Create new price data
         let price_data = PriceData {
             asset: asset.clone(),
-            price: price as u64, // Convert i128 to u64 for storage
+            price,
             timestamp,
-            source: source.clone(),
         };
 
-        // Update the price for the asset
         prices.set(asset.clone(), price_data);
-
-        // Store the updated map
         storage.set(&PRICE_DATA_KEY, &prices);
 
-        // Emit the PriceUpdated event
         PriceUpdated {
             source: source.clone(),
             asset: asset.clone(),
             price,
             timestamp,
-        }.publish(&env);
+        }
+        .publish(&env);
+
+        Ok(())
     }
 }
 
+mod asset_symbol;
 mod auth;
 mod median;
 mod test;

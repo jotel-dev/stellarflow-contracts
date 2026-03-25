@@ -1,6 +1,6 @@
 {
   "generators": {
-    "address": 2,
+    "address": 1,
     "nonce": 0,
     "mux_id": 0
   },
@@ -28,6 +28,93 @@
             "contract_data": {
               "ext": "v0",
               "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+              "key": {
+                "symbol": "PRICES"
+              },
+              "durability": "persistent",
+              "val": {
+                "map": [
+                  {
+                    "key": {
+                      "symbol": "KES"
+                    },
+                    "val": {
+                      "map": [
+                        {
+                          "key": {
+                            "symbol": "asset"
+                          },
+                          "val": {
+                            "symbol": "KES"
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "price"
+                          },
+                          "val": {
+                            "i128": "50000000000"
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "timestamp"
+                          },
+                          "val": {
+                            "u64": "0"
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "key": {
+                      "symbol": "NGN"
+                    },
+                    "val": {
+                      "map": [
+                        {
+                          "key": {
+                            "symbol": "asset"
+                          },
+                          "val": {
+                            "symbol": "NGN"
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "price"
+                          },
+                          "val": {
+                            "i128": "1000000"
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "timestamp"
+                          },
+                          "val": {
+                            "u64": "0"
+                          }
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          "ext": "v0"
+        },
+        "live_until": 4095
+      },
+      {
+        "entry": {
+          "last_modified_ledger_seq": 0,
+          "data": {
+            "contract_data": {
+              "ext": "v0",
+              "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
               "key": "ledger_key_contract_instance",
               "durability": "persistent",
               "val": {
@@ -35,99 +122,7 @@
                   "executable": {
                     "wasm": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
                   },
-                  "storage": [
-                    {
-                      "key": {
-                        "symbol": "PRICES"
-                      },
-                      "val": {
-                        "map": [
-                          {
-                            "key": {
-                              "symbol": "BTC"
-                            },
-                            "val": {
-                              "map": [
-                                {
-                                  "key": {
-                                    "symbol": "asset"
-                                  },
-                                  "val": {
-                                    "symbol": "BTC"
-                                  }
-                                },
-                                {
-                                  "key": {
-                                    "symbol": "price"
-                                  },
-                                  "val": {
-                                    "u64": "50000000000"
-                                  }
-                                },
-                                {
-                                  "key": {
-                                    "symbol": "source"
-                                  },
-                                  "val": {
-                                    "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
-                                  }
-                                },
-                                {
-                                  "key": {
-                                    "symbol": "timestamp"
-                                  },
-                                  "val": {
-                                    "u64": "1234567890"
-                                  }
-                                }
-                              ]
-                            }
-                          },
-                          {
-                            "key": {
-                              "symbol": "XLM"
-                            },
-                            "val": {
-                              "map": [
-                                {
-                                  "key": {
-                                    "symbol": "asset"
-                                  },
-                                  "val": {
-                                    "symbol": "XLM"
-                                  }
-                                },
-                                {
-                                  "key": {
-                                    "symbol": "price"
-                                  },
-                                  "val": {
-                                    "u64": "1000000"
-                                  }
-                                },
-                                {
-                                  "key": {
-                                    "symbol": "source"
-                                  },
-                                  "val": {
-                                    "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
-                                  }
-                                },
-                                {
-                                  "key": {
-                                    "symbol": "timestamp"
-                                  },
-                                  "val": {
-                                    "u64": "1234567890"
-                                  }
-                                }
-                              ]
-                            }
-                          }
-                        ]
-                      }
-                    }
-                  ]
+                  "storage": null
                 }
               }
             }

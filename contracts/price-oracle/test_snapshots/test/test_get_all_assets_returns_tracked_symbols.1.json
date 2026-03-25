@@ -7,12 +7,13 @@
   "auth": [
     [],
     [],
+    [],
     []
   ],
   "ledger": {
     "protocol_version": 25,
-    "sequence_number": 1,
-    "timestamp": 1234567890,
+    "sequence_number": 0,
+    "timestamp": 0,
     "network_id": "0000000000000000000000000000000000000000000000000000000000000000",
     "base_reserve": 0,
     "min_persistent_entry_ttl": 4096,
@@ -34,6 +35,39 @@
                 "map": [
                   {
                     "key": {
+                      "symbol": "KES"
+                    },
+                    "val": {
+                      "map": [
+                        {
+                          "key": {
+                            "symbol": "asset"
+                          },
+                          "val": {
+                            "symbol": "KES"
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "price"
+                          },
+                          "val": {
+                            "i128": "800"
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "timestamp"
+                          },
+                          "val": {
+                            "u64": "0"
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "key": {
                       "symbol": "NGN"
                     },
                     "val": {
@@ -51,7 +85,7 @@
                             "symbol": "price"
                           },
                           "val": {
-                            "i128": "1000000"
+                            "i128": "1500"
                           }
                         },
                         {
@@ -59,7 +93,7 @@
                             "symbol": "timestamp"
                           },
                           "val": {
-                            "u64": "1234567890"
+                            "u64": "0"
                           }
                         }
                       ]
@@ -71,7 +105,7 @@
           },
           "ext": "v0"
         },
-        "live_until": 4096
+        "live_until": 4095
       },
       {
         "entry": {
