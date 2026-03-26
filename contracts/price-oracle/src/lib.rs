@@ -67,6 +67,16 @@ pub fn calculate_percentage_difference_bps(old_price: i128, new_price: i128) -> 
 
 #[contractimpl]
 impl PriceOracle {
+    /// Initialise the contract admin once.
+    pub fn init_admin(env: Env, address: Address) {
+        if crate::auth::_has_admin(&env) {
+            panic!("Admin already initialised");
+        }
+
+        address.require_auth();
+        crate::auth::_set_admin(&env, &address);
+    }
+
     /// Get the price data for a specific asset.
     pub fn get_price(env: Env, asset: Symbol) -> Result<PriceData, Error> {
         let storage = env.storage().persistent();

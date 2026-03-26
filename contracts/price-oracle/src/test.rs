@@ -11,6 +11,38 @@ fn setup() -> (Env, PriceOracleClient<'static>) {
 }
 
 #[test]
+fn test_init_admin_sets_admin_once() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(PriceOracle, ());
+    let client = PriceOracleClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+
+    client.init_admin(&admin);
+
+    env.as_contract(&contract_id, || {
+        assert!(crate::auth::_has_admin(&env));
+        assert_eq!(crate::auth::_get_admin(&env), admin);
+    });
+}
+
+#[test]
+#[should_panic(expected = "Admin already initialised")]
+fn test_init_admin_panics_when_called_twice() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(PriceOracle, ());
+    let client = PriceOracleClient::new(&env, &contract_id);
+    let first_admin = Address::generate(&env);
+    let second_admin = Address::generate(&env);
+
+    client.init_admin(&first_admin);
+    client.init_admin(&second_admin);
+}
+
+#[test]
 fn test_get_price_existing_asset() {
     let env = Env::default();
     let contract_id = env.register(PriceOracle, ());
