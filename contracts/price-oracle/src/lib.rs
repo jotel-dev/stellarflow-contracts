@@ -1,8 +1,6 @@
 #![no_std]
 
-use soroban_sdk::{
-    contract, contracterror, contractevent, contractimpl, symbol_short, Address, Env, Symbol,
-};
+use soroban_sdk::{contract, contracterror, contractimpl, Address, Env, Symbol};
 
 use crate::types::PriceData;
 
@@ -17,16 +15,6 @@ pub enum Error {
     Unauthorized = 2,
     /// Asset symbol is not in the approved list (NGN, KES, GHS)
     InvalidAssetSymbol = 3,
-}
-
-/// Event emitted when a price is updated
-#[contractevent]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PriceUpdated {
-    pub source: Address,
-    pub asset: Symbol,
-    pub price: i128,
-    pub timestamp: u64,
 }
 
 #[contract]
@@ -152,13 +140,10 @@ impl PriceOracle {
         prices.set(asset.clone(), price_data);
         storage.set(&PRICE_DATA_KEY, &prices);
 
-        PriceUpdated {
-            source,
-            asset,
-            price,
-            timestamp,
-        }
-        .publish(&env);
+        env.events()
+            .publish((Symbol::new(&env, "PriceUpdated"),), (asset, price));
+
+        Ok(())
     }
 }
 
