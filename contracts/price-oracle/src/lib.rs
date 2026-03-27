@@ -77,6 +77,20 @@ impl PriceOracle {
         crate::auth::_set_admin(&env, &address);
     }
 
+    /// Pause the contract (admin-only).
+    pub fn pause(env: Env, admin: Address) {
+        admin.require_auth();
+        crate::auth::_require_admin(&env, &admin);
+        crate::auth::_set_paused(&env, true);
+    }
+
+    /// Unpause the contract (admin-only).
+    pub fn unpause(env: Env, admin: Address) {
+        admin.require_auth();
+        crate::auth::_require_admin(&env, &admin);
+        crate::auth::_set_paused(&env, false);
+    }
+
     /// Get the price data for a specific asset.
     pub fn get_price(env: Env, asset: Symbol) -> Result<PriceData, Error> {
         let storage = env.storage().persistent();
@@ -98,6 +112,14 @@ impl PriceOracle {
             .get(&PRICE_DATA_KEY)
             .unwrap_or_else(|| soroban_sdk::Map::new(&env));
         prices.get(asset)
+    }
+
+    /// Get the most recent price for a specific asset.
+    ///
+    /// Returns the price value as an i128, or an error if the asset is not found.
+    pub fn get_last_price(env: Env, asset: Symbol) -> Result<i128, Error> {
+        let price_data = Self::get_price(env, asset)?;
+        Ok(price_data.price)
     }
 
     /// Returns a vector of all currently tracked asset symbols.
@@ -125,7 +147,6 @@ impl PriceOracle {
 
         prices.set(asset, price_data);
         storage.set(&PRICE_DATA_KEY, &prices);
-        Ok(())
     }
 
     /// Update the price for a specific asset (authorized backend relayer function)
@@ -140,13 +161,17 @@ impl PriceOracle {
     /// * `Error::InvalidAssetSymbol` - If `asset` is not NGN, KES, or GHS
     ///
     /// # Panics
-    /// If `source` is not a whitelisted provider.
+    /// If `source` is not a whitelisted provider or if the contract is paused.
     pub fn update_price(
         env: Env,
         source: Address,
         asset: Symbol,
         price: i128,
     ) -> Result<(), Error> {
+        if crate::auth::_is_paused(&env) {
+            panic!("Contract is paused");
+        }
+
         if !asset_symbol::is_approved_asset_symbol(asset.clone()) {
             return Err(Error::InvalidAssetSymbol);
         }
