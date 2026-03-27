@@ -63,6 +63,20 @@ fn test_init_admin_sets_admin_once() {
 }
 
 #[test]
+fn test_get_admin_reader_returns_current_admin() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(PriceOracle, ());
+    let client = PriceOracleClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+
+    client.init_admin(&admin);
+
+    assert_eq!(client.get_admin(), admin);
+}
+
+#[test]
 #[should_panic(expected = "Admin already initialised")]
 fn test_init_admin_panics_when_called_twice() {
     let env = Env::default();
