@@ -1,7 +1,52 @@
 #![cfg(test)]
 
 use super::*;
-use soroban_sdk::{symbol_short, testutils::Address as _, testutils::Events, testutils::Ledger, Address, Env};
+use soroban_sdk::{
+    contract, contractimpl, symbol_short, testutils::Address as _, testutils::Ledger, Address,
+    Env, Symbol,
+};
+
+// ============================================================================
+// Dummy Contract - Example implementation for cross-contract price fetching
+// ============================================================================
+
+/// A simple example contract that demonstrates how to consume prices from StellarFlow.
+/// This contract shows the minimal implementation needed to call the price oracle.
+#[contract]
+pub struct DummyConsumer;
+
+#[contractimpl]
+impl DummyConsumer {
+    /// Fetch the price of an asset from the StellarFlow price oracle.
+    ///
+    /// # Arguments
+    /// * `oracle_address` - The address of the StellarFlow price oracle contract
+    /// * `asset` - The symbol of the asset to fetch (e.g., "NGN", "KES", "GHS")
+    ///
+    /// # Returns
+    /// The current price for the asset, or panics if not found
+    pub fn get_oracle_price(env: Env, oracle_address: Address, asset: Symbol) -> i128 {
+        // Use the public cross-contract interface client that downstream contracts consume.
+        let oracle_client = StellarFlowClient::new(&env, &oracle_address);
+
+        // Call get_last_price which is optimized for minimal gas usage
+        oracle_client.get_last_price(&asset)
+    }
+
+    /// Fetch the full price data from the oracle, demonstrating the safe getter.
+    ///
+    /// Returns `None` if the asset doesn't exist, allowing graceful degradation.
+    pub fn try_get_oracle_price_data(env: Env, oracle_address: Address, asset: Symbol) -> Option<PriceData> {
+        let oracle_client = StellarFlowClient::new(&env, &oracle_address);
+        oracle_client.get_price_safe(&asset)
+    }
+
+    /// Example function showing how to fetch all available assets from the oracle.
+    pub fn get_all_available_assets(env: Env, oracle_address: Address) -> soroban_sdk::Vec<Symbol> {
+        let oracle_client = StellarFlowClient::new(&env, &oracle_address);
+        oracle_client.get_all_assets()
+    }
+}
 
 #[test]
 fn test_initialize_success() {
@@ -281,8 +326,7 @@ fn test_update_price_rejects_unapproved_symbol() {
 
     let asset = symbol_short!("ETH");
     let price: i128 = 1_000_000;
-, &3600u64
-    match client.try_update_price(&provider, &asset, &price, &6u32, &100u32) {
+    match client.try_update_price(&provider, &asset, &price, &6u32, &100u32, &3600u64) {
         Err(Ok(e)) => assert_eq!(e, Error::InvalidAssetSymbol),
         other => panic!("expected InvalidAssetSymbol, got {:?}", other),
     }
@@ -299,17 +343,16 @@ fn test_update_price_emits_event() {
     let admin = Address::generate(&env);
     let provider = Address::generate(&env);
     let asset = symbol_short!("NGN");
-    let old_price: i128 = 1_250_000;
     let price: i128 = 1_500_000;
 
     env.as_contract(&contract_id, || {
         crate::auth::_set_admin(&env, &admin);
         crate::auth::_add_provider(&env, &provider);
     });
-, &2u32, &3600u64);
+
     env.ledger().set_timestamp(1_700_000_000);
-    client.update_price(&provider, &asset, &price, &6u32, &100u32, &3600u64
-    client.update_price(&provider, &asset, &price);
+    env.ledger().set_sequence_number(1);
+    client.update_price(&provider, &asset, &price, &6u32, &100u32, &3600u64);
 
     // let events = env.events().all();
     // assert!(events.len() > 0);
@@ -367,3 +410,129 @@ fn test_is_stale_with_mocked_ledger_time() {
     assert!(is_stale(1500u64, 1000u64, 500u64), "Price should be stale at expiration boundary");
 }
 
+// ============================================================================
+// Cross-Contract Tests - Dummy Consumer calling the Oracle
+// ============================================================================
+
+#[test]
+fn test_dummy_consumer_calls_oracle_successfully() {
+    let env = Env::default();
+
+    // Register the price oracle contract
+    let oracle_id = env.register(PriceOracle, ());
+    let oracle_client = PriceOracleClient::new(&env, &oracle_id);
+
+    // Register the dummy consumer contract
+    let dummy_id = env.register(DummyConsumer, ());
+    let dummy_client = DummyConsumerClient::new(&env, &dummy_id);
+
+    // Set up the oracle with some prices
+    let ngn = symbol_short!("NGN");
+    let price = 1_500_000_i128;
+    env.ledger().set_timestamp(1_234_567_890);
+    env.ledger().set_sequence_number(1);
+    oracle_client.set_price(&ngn, &price, &2u32, &3600u64);
+
+    // The Dummy contract calls the Oracle to get the price
+    let fetched_price = dummy_client.get_oracle_price(&oracle_id, &ngn);
+
+    assert_eq!(fetched_price, price, "Dummy contract should receive correct price from Oracle");
+}
+
+#[test]
+fn test_dummy_consumer_gets_all_assets() {
+    let env = Env::default();
+
+    let oracle_id = env.register(PriceOracle, ());
+    let oracle_client = PriceOracleClient::new(&env, &oracle_id);
+
+    let dummy_id = env.register(DummyConsumer, ());
+    let dummy_client = DummyConsumerClient::new(&env, &dummy_id);
+
+    // Add multiple prices to the oracle
+    let ngn = symbol_short!("NGN");
+    let kes = symbol_short!("KES");
+    let ghs = symbol_short!("GHS");
+
+    oracle_client.set_price(&ngn, &1_500_i128, &2u32, &3600u64);
+    oracle_client.set_price(&kes, &800_i128, &2u32, &3600u64);
+    oracle_client.set_price(&ghs, &5_000_i128, &2u32, &3600u64);
+
+    // The Dummy contract fetches all available assets
+    let assets = dummy_client.get_all_available_assets(&oracle_id);
+
+    assert_eq!(assets.len(), 3, "Should have 3 assets");
+    assert!(assets.contains(&ngn));
+    assert!(assets.contains(&kes));
+    assert!(assets.contains(&ghs));
+}
+
+#[test]
+fn test_dummy_consumer_safe_price_fetch() {
+    let env = Env::default();
+
+    let oracle_id = env.register(PriceOracle, ());
+    let oracle_client = PriceOracleClient::new(&env, &oracle_id);
+
+    let dummy_id = env.register(DummyConsumer, ());
+    let dummy_client = DummyConsumerClient::new(&env, &dummy_id);
+
+    // Add a price to the oracle
+    let ngn = symbol_short!("NGN");
+    let btc = symbol_short!("BTC"); // Not added to oracle
+    let price = 1_500_000_i128;
+
+    env.ledger().set_timestamp(1_234_567_890);
+    env.ledger().set_sequence_number(1);
+    oracle_client.set_price(&ngn, &price, &2u32, &3600u64);
+
+    // Safely fetch existing price
+    let existing_price = dummy_client.try_get_oracle_price_data(&oracle_id, &ngn);
+    assert!(existing_price.is_some(), "Should find existing price");
+    assert_eq!(
+        existing_price.unwrap().price,
+        price,
+        "Price data should match"
+    );
+
+    // Safely fetch non-existing price (should return None, not panic)
+    let missing_price = dummy_client.try_get_oracle_price_data(&oracle_id, &btc);
+    assert!(missing_price.is_none(), "Should return None for non-existent asset");
+}
+
+#[test]
+fn test_dummy_consumer_multiple_price_fetches() {
+    let env = Env::default();
+
+    let oracle_id = env.register(PriceOracle, ());
+    let oracle_client = PriceOracleClient::new(&env, &oracle_id);
+
+    let dummy_id = env.register(DummyConsumer, ());
+    let dummy_client = DummyConsumerClient::new(&env, &dummy_id);
+
+    // Set up initial prices
+    let ngn = symbol_short!("NGN");
+    let kes = symbol_short!("KES");
+    env.ledger().set_timestamp(1_000_000);
+    env.ledger().set_sequence_number(1);
+    oracle_client.set_price(&ngn, &1_000_000_i128, &2u32, &3600u64);
+    oracle_client.set_price(&kes, &500_000_i128, &2u32, &3600u64);
+
+    // First call - verify prices
+    let ngn_price_1 = dummy_client.get_oracle_price(&oracle_id, &ngn);
+    let kes_price_1 = dummy_client.get_oracle_price(&oracle_id, &kes);
+    assert_eq!(ngn_price_1, 1_000_000_i128);
+    assert_eq!(kes_price_1, 500_000_i128);
+
+    // Update prices
+    env.ledger().set_timestamp(2_000_000);
+    env.ledger().set_sequence_number(2);
+    oracle_client.set_price(&ngn, &1_200_000_i128, &2u32, &3600u64);
+    oracle_client.set_price(&kes, &450_000_i128, &2u32, &3600u64);
+
+    // Second call - verify updated prices
+    let ngn_price_2 = dummy_client.get_oracle_price(&oracle_id, &ngn);
+    let kes_price_2 = dummy_client.get_oracle_price(&oracle_id, &kes);
+    assert_eq!(ngn_price_2, 1_200_000_i128);
+    assert_eq!(kes_price_2, 450_000_i128);
+}

@@ -1,6 +1,6 @@
 #[cfg(test)]
 use soroban_sdk::testutils::Events;
-use soroban_sdk::{contracttype, Address, Env};
+use soroban_sdk::{contracttype, symbol_short, Address, Env};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Storage Key
@@ -26,11 +26,8 @@ pub fn _set_admin(env: &Env, admin: &Address) {
 
     env.storage().instance().set(&DataKey::Admin, admin);
 
-    crate::AdminChanged {
-        previous_admin,
-        new_admin: admin.clone(),
-    }
-    .publish(env);
+    env.events()
+        .publish((symbol_short!("adminchg"),), (previous_admin, admin.clone()));
 }
 
 pub fn _get_admin(env: &Env) -> Address {
@@ -114,7 +111,6 @@ mod auth_tests {
     extern crate alloc;
     use super::*;
     use alloc::format;
-    use alloc::string::String;
     use soroban_sdk::{contract, contractimpl, testutils::Address as _, Env};
 
     #[contract]
@@ -308,7 +304,7 @@ mod auth_tests {
 
     #[test]
     fn test_set_admin_emits_event_on_admin_change() {
-        let (env, contract_id, old_admin) = setup();
+        let (env, contract_id, _old_admin) = setup();
         let new_admin = Address::generate(&env);
 
         env.as_contract(&contract_id, || {

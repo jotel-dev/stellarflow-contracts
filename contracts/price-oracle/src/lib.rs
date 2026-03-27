@@ -1,10 +1,47 @@
 #![no_std]
 
-use soroban_sdk::{contract, contracterror, contractevent, contractimpl, Address, Env, Symbol};
+use soroban_sdk::{
+    contract, contractclient, contracterror, contractevent, contractimpl, symbol_short, Address,
+    Env, Symbol,
+};
 
 use crate::types::{DataKey, PriceData};
 
-const PRICE_DATA_KEY: Symbol = symbol_short!("prices");
+/// A clean, gas-optimized interface for other Soroban contracts to fetch prices from StellarFlow.
+///
+/// The generated client from this trait is the intended cross-contract entrypoint for downstream
+/// Soroban applications. The getters are read-only and `get_last_price` is the cheapest option
+/// when callers only need the scalar price value.
+#[contractclient(name = "StellarFlowClient")]
+pub trait StellarFlowTrait {
+    /// Get the full price data for a specific asset.
+    ///
+    /// Returns the complete price information including timestamp, decimals, confidence score, and TTL.
+    /// Returns `Error::AssetNotFound` if the asset does not exist or the price is stale.
+    fn get_price(env: Env, asset: Symbol) -> Result<PriceData, Error>;
+
+    /// Get the price data for a specific asset, or `None` if not found.
+    ///
+    /// Unlike `get_price`, this does not error on stale or missing prices.
+    /// Useful for contracts that want to gracefully handle missing data.
+    fn get_price_safe(env: Env, asset: Symbol) -> Option<PriceData>;
+
+    /// Get the most recent price value for a specific asset.
+    ///
+    /// Returns just the price value as an i128, without other metadata.
+    /// This is the fastest getter for contracts that only need the price.
+    fn get_last_price(env: Env, asset: Symbol) -> Result<i128, Error>;
+
+    /// Get all currently tracked asset symbols.
+    ///
+    /// Returns a vector of all assets that have prices stored in the contract.
+    fn get_all_assets(env: Env) -> soroban_sdk::Vec<Symbol>;
+
+    /// Get the current admin address.
+    ///
+    /// Returns the address of the contract administrator.
+    fn get_admin(env: Env) -> Address;
+}
 
 /// Error types for the price oracle contract
 #[contracterror]
@@ -22,13 +59,13 @@ pub enum Error {
 }
 
 /// Event emitted when a price is updated
-#[contracttype]
+#[contractevent]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PriceUpdated {
+    pub source: Address,
     pub asset: Symbol,
-    pub new_price: i128,
-    pub old_price: i128,
-    pub provider_address: Address,
+    pub price: i128,
+    pub timestamp: u64,
 }
 
 /// Event emitted when the admin address is changed
@@ -99,6 +136,21 @@ impl PriceOracle {
             .instance()
             .set(&DataKey::BaseCurrencyPairs, &base_currency_pairs);
     }
+
+    /// Initialize the admin once for the auth helper flow used in tests and governance actions.
+    pub fn init_admin(env: Env, admin: Address) {
+        if crate::auth::_has_admin(&env) {
+            panic!("Admin already initialised");
+        }
+
+        crate::auth::_set_admin(&env, &admin);
+    }
+
+    /// Return the current admin address.
+    pub fn get_admin(env: Env) -> Address {
+        crate::auth::_get_admin(&env)
+    }
+
     /// Get the price data for a specific asset.
     /// Get the price data for a specific asset. Returns error if price is stale.
     pub fn get_price(env: Env, asset: Symbol) -> Result<PriceData, Error> {
@@ -238,13 +290,10 @@ impl PriceOracle {
         prices.set(asset.clone(), price_data);
         storage.set(&DataKey::PriceData, &prices);
 
-        PriceUpdated {
-            source,
-            asset,
-            price,
-            timestamp,
-        }
-        .publish(&env);
+        env.events().publish(
+            (symbol_short!("priceupd"), asset),
+            (source, price, old_price, timestamp),
+        );
         Ok(())
     }
 }
