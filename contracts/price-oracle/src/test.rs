@@ -660,3 +660,111 @@ fn test_dummy_consumer_multiple_price_fetches() {
     assert_eq!(ngn_price_2, 1_200_000_i128);
     assert_eq!(kes_price_2, 450_000_i128);
 }
+
+// ============================================================================
+// Bulk get_prices Tests
+// ============================================================================
+
+#[test]
+fn test_get_prices_returns_all_requested_assets() {
+    let env = Env::default();
+    let contract_id = env.register(PriceOracle, ());
+    let client = PriceOracleClient::new(&env, &contract_id);
+
+    let ngn = symbol_short!("NGN");
+    let kes = symbol_short!("KES");
+    let ghs = symbol_short!("GHS");
+
+    env.ledger().set_timestamp(1_000_000);
+    env.ledger().set_sequence_number(1);
+    client.set_price(&ngn, &1_500_i128, &2u32, &3600u64);
+    client.set_price(&kes, &800_i128, &2u32, &3600u64);
+    client.set_price(&ghs, &5_000_i128, &2u32, &3600u64);
+
+    let assets = soroban_sdk::vec![&env, ngn.clone(), kes.clone(), ghs.clone()];
+    let results = client.get_prices(&assets);
+
+    assert_eq!(results.len(), 3);
+    assert_eq!(results.get(0).unwrap().unwrap().price, 1_500_i128);
+    assert_eq!(results.get(1).unwrap().unwrap().price, 800_i128);
+    assert_eq!(results.get(2).unwrap().unwrap().price, 5_000_i128);
+}
+
+#[test]
+fn test_get_prices_returns_none_for_missing_asset() {
+    let env = Env::default();
+    let contract_id = env.register(PriceOracle, ());
+    let client = PriceOracleClient::new(&env, &contract_id);
+
+    let ngn = symbol_short!("NGN");
+    let btc = symbol_short!("BTC"); // not stored
+
+    env.ledger().set_timestamp(1_000_000);
+    env.ledger().set_sequence_number(1);
+    client.set_price(&ngn, &1_500_i128, &2u32, &3600u64);
+
+    let assets = soroban_sdk::vec![&env, ngn.clone(), btc.clone()];
+    let results = client.get_prices(&assets);
+
+    assert_eq!(results.len(), 2);
+    assert!(results.get(0).unwrap().is_some());
+    assert!(results.get(1).unwrap().is_none()); // BTC missing → None
+}
+
+#[test]
+fn test_get_prices_returns_none_for_stale_asset() {
+    let env = Env::default();
+    let contract_id = env.register(PriceOracle, ());
+    let client = PriceOracleClient::new(&env, &contract_id);
+
+    let ngn = symbol_short!("NGN");
+
+    // Store price with a short TTL of 100 seconds
+    env.ledger().set_timestamp(1_000_000);
+    env.ledger().set_sequence_number(1);
+    client.set_price(&ngn, &1_500_i128, &2u32, &100u64);
+
+    // Advance time past TTL
+    env.ledger().set_timestamp(1_000_200);
+    env.ledger().set_sequence_number(2);
+
+    let assets = soroban_sdk::vec![&env, ngn.clone()];
+    let results = client.get_prices(&assets);
+
+    assert_eq!(results.len(), 1);
+    assert!(results.get(0).unwrap().is_none()); // stale → None
+}
+
+#[test]
+fn test_get_prices_preserves_order() {
+    let env = Env::default();
+    let contract_id = env.register(PriceOracle, ());
+    let client = PriceOracleClient::new(&env, &contract_id);
+
+    let ngn = symbol_short!("NGN");
+    let kes = symbol_short!("KES");
+
+    env.ledger().set_timestamp(1_000_000);
+    env.ledger().set_sequence_number(1);
+    client.set_price(&ngn, &111_i128, &2u32, &3600u64);
+    client.set_price(&kes, &222_i128, &2u32, &3600u64);
+
+    // Request in reverse order
+    let assets = soroban_sdk::vec![&env, kes.clone(), ngn.clone()];
+    let results = client.get_prices(&assets);
+
+    assert_eq!(results.get(0).unwrap().unwrap().price, 222_i128); // KES first
+    assert_eq!(results.get(1).unwrap().unwrap().price, 111_i128); // NGN second
+}
+
+#[test]
+fn test_get_prices_empty_input_returns_empty_vec() {
+    let env = Env::default();
+    let contract_id = env.register(PriceOracle, ());
+    let client = PriceOracleClient::new(&env, &contract_id);
+
+    let assets: soroban_sdk::Vec<Symbol> = soroban_sdk::vec![&env];
+    let results = client.get_prices(&assets);
+
+    assert_eq!(results.len(), 0);
+}

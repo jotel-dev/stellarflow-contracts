@@ -29,6 +29,12 @@ pub trait StellarFlowTrait {
     /// This is the fastest getter for contracts that only need the price.
     fn get_last_price(env: Env, asset: Symbol) -> Result<i128, Error>;
 
+    /// Get prices for a list of assets in a single call.
+    ///
+    /// Returns a `Vec<PriceEntry>` in the same order as the input symbols.
+    /// Assets that are missing or stale are represented as `None` entries.
+    fn get_prices(env: Env, assets: soroban_sdk::Vec<Symbol>) -> soroban_sdk::Vec<Option<crate::types::PriceEntry>>;
+
     /// Get all currently tracked asset symbols.
     ///
     /// Returns a vector of all assets that have prices stored in the contract.
@@ -189,6 +195,41 @@ impl PriceOracle {
     pub fn get_last_price(env: Env, asset: Symbol) -> Result<i128, Error> {
         let price_data = Self::get_price(env, asset)?;
         Ok(price_data.price)
+    }
+
+    /// Get prices for a batch of assets in a single call.
+    ///
+    /// Returns a `Vec<Option<PriceEntry>>` in the same order as `assets`.
+    /// Each entry is `Some(PriceEntry)` when the asset exists and is not stale,
+    /// or `None` when it is missing or stale — matching `get_price_safe` semantics.
+    pub fn get_prices(
+        env: Env,
+        assets: soroban_sdk::Vec<Symbol>,
+    ) -> soroban_sdk::Vec<Option<crate::types::PriceEntry>> {
+        let prices: soroban_sdk::Map<Symbol, PriceData> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::PriceData)
+            .unwrap_or_else(|| soroban_sdk::Map::new(&env));
+
+        let now = env.ledger().timestamp();
+        let mut result = soroban_sdk::Vec::new(&env);
+
+        for asset in assets.iter() {
+            let entry = prices.get(asset).and_then(|pd| {
+                if is_stale(now, pd.timestamp, pd.ttl) {
+                    None
+                } else {
+                    Some(crate::types::PriceEntry {
+                        price: pd.price,
+                        timestamp: pd.timestamp,
+                    })
+                }
+            });
+            result.push_back(entry);
+        }
+
+        result
     }
 
     /// Returns a vector of all currently tracked asset symbols.
