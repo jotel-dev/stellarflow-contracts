@@ -1,9 +1,6 @@
 #![no_std]
 
-use soroban_sdk::{
-    contract, contractclient, contracterror, contractevent, contractimpl, symbol_short, Address,
-    Env, Symbol,
-};
+use soroban_sdk::{contract, contracterror, contractimpl, Address, Env, Symbol};
 
 use crate::types::{DataKey, PriceData};
 
@@ -56,24 +53,6 @@ pub enum Error {
     InvalidAssetSymbol = 3,
     /// Price must be greater than zero.
     InvalidPrice = 4,
-}
-
-/// Event emitted when a price is updated
-#[contractevent]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PriceUpdated {
-    pub source: Address,
-    pub asset: Symbol,
-    pub price: i128,
-    pub timestamp: u64,
-}
-
-/// Event emitted when the admin address is changed
-#[contractevent]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct AdminChanged {
-    pub previous_admin: Option<Address>,
-    pub new_admin: Address,
 }
 
 #[contract]
@@ -290,10 +269,9 @@ impl PriceOracle {
         prices.set(asset.clone(), price_data);
         storage.set(&DataKey::PriceData, &prices);
 
-        env.events().publish(
-            (symbol_short!("priceupd"), asset),
-            (source, price, old_price, timestamp),
-        );
+        env.events()
+            .publish((Symbol::new(&env, "PriceUpdated"),), (asset, price));
+
         Ok(())
     }
 }
