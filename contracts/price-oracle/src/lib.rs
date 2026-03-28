@@ -1,6 +1,6 @@
 #![no_std]
 
-use soroban_sdk::{contract, contractclient, contracterror, contractimpl, Address, Env, Symbol};
+use soroban_sdk::{contract, contractclient, contracterror, contractimpl, panic_with_error, Address, Env, Symbol};
 
 use crate::types::{DataKey, PriceData};
 
@@ -47,12 +47,16 @@ pub trait StellarFlowTrait {
 pub enum Error {
     /// Asset does not exist in the price oracle.
     AssetNotFound = 1,
-    /// Unauthorized caller - not a whitelisted provider.
+    /// Unauthorized caller - not a whitelisted provider or admin.
     Unauthorized = 2,
     /// Asset symbol is not in the approved list (NGN, KES, GHS)
     InvalidAssetSymbol = 3,
     /// Price must be greater than zero.
     InvalidPrice = 4,
+    /// Caller is not authorized to perform this action.
+    NotAuthorized = 5,
+    /// Contract or admin has already been initialized.
+    AlreadyInitialized = 6,
 }
 
 #[contract]
@@ -114,7 +118,7 @@ impl PriceOracle {
     pub fn initialize(env: Env, admin: Address, base_currency_pairs: soroban_sdk::Vec<Symbol>) {
         // Prevent double initialization
         if env.storage().instance().has(&DataKey::Admin) {
-           panic!("Contract already initialized");
+            panic_with_error!(&env, Error::AlreadyInitialized);
         }
 
         #[allow(deprecated)]
@@ -131,7 +135,7 @@ impl PriceOracle {
 
     pub fn init_admin(env: Env, admin: Address) {
         if crate::auth::_has_admin(&env) {
-            panic!("Admin already initialised");
+            panic_with_error!(&env, Error::AlreadyInitialized);
         }
 
         #[allow(deprecated)]
@@ -261,7 +265,7 @@ impl PriceOracle {
         }
 
         if !crate::auth::_is_provider(&env, &source) {
-            panic!("Unauthorised: caller is not a whitelisted provider");
+            return Err(Error::NotAuthorized);
         }
 
         let storage = env.storage().persistent();

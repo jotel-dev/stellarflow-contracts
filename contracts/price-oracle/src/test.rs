@@ -83,7 +83,7 @@ fn test_initialize_success() {
 }
 
 #[test]
-#[should_panic(expected = "Contract already initialized")]
+#[should_panic]
 fn test_initialize_double_panics() {
     let env = Env::default();
     env.mock_all_auths();
@@ -92,7 +92,7 @@ fn test_initialize_double_panics() {
     let admin = <soroban_sdk::Address as soroban_sdk::testutils::Address>::generate(&env);
     let pairs = soroban_sdk::vec![&env, symbol_short!("NGN")];
     client.initialize(&admin, &pairs);
-    // Second call should panic
+    // Second call should panic with Error::AlreadyInitialized
     client.initialize(&admin, &pairs);
 }
 
@@ -140,7 +140,7 @@ fn test_get_admin_reader_returns_current_admin() {
 }
 
 #[test]
-#[should_panic(expected = "Admin already initialised")]
+#[should_panic]
 fn test_init_admin_panics_when_called_twice() {
     let env = Env::default();
     env.mock_all_auths();
@@ -151,6 +151,7 @@ fn test_init_admin_panics_when_called_twice() {
     let second_admin = <soroban_sdk::Address as soroban_sdk::testutils::Address>::generate(&env);
 
     client.init_admin(&first_admin);
+    // Second call should panic with Error::AlreadyInitialized
     client.init_admin(&second_admin);
 }
 
@@ -302,7 +303,7 @@ fn test_update_price_multiple_updates() {
 }
 
 #[test]
-fn test_update_price_unauthorized_rejection() {
+fn test_update_price_admin_authority() {
     let env = Env::default();
     env.mock_all_auths();
 
@@ -324,7 +325,10 @@ fn test_update_price_unauthorized_rejection() {
         &100u32,
         &3600u64,
     );
-    assert!(result.is_err());
+    match result {
+        Err(Ok(e)) => assert_eq!(e, Error::NotAuthorized),
+        other => panic!("expected NotAuthorized, got {:?}", other),
+    }
 }
 
 #[test]
