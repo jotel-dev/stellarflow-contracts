@@ -555,3 +555,44 @@ fn test_dummy_consumer_multiple_price_fetches() {
     assert_eq!(ngn_price_2, 1_200_000_i128);
     assert_eq!(kes_price_2, 450_000_i128);
 }
+
+// ============================================================================
+// Upgrade tests
+// ============================================================================
+
+/// A real Soroban WASM blob used to satisfy the host's WASM validation
+/// when testing `upload_contract_wasm` in the upgrade happy-path test.
+const TEST_WASM: &[u8] = include_bytes!("../test_fixtures/test_contract_data.wasm");
+
+#[test]
+fn test_upgrade_admin_only() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(PriceOracle, ());
+    let client = PriceOracleClient::new(&env, &contract_id);
+    let admin = <soroban_sdk::Address as soroban_sdk::testutils::Address>::generate(&env);
+    client.init_admin(&admin);
+
+    let new_wasm_hash = env.deployer().upload_contract_wasm(TEST_WASM);
+    // Should not panic – admin is authorised
+    client.upgrade(&admin, &new_wasm_hash);
+}
+
+#[test]
+#[should_panic(expected = "Unauthorised: caller is not the admin")]
+fn test_upgrade_rejects_non_admin() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(PriceOracle, ());
+    let client = PriceOracleClient::new(&env, &contract_id);
+    let admin = <soroban_sdk::Address as soroban_sdk::testutils::Address>::generate(&env);
+    let non_admin = <soroban_sdk::Address as soroban_sdk::testutils::Address>::generate(&env);
+    client.init_admin(&admin);
+
+    // Auth check runs before the hash is used, so any 32-byte value is fine here.
+    let dummy_hash = soroban_sdk::BytesN::from_array(&env, &[0u8; 32]);
+    // Must panic – non_admin is not the admin
+    client.upgrade(&non_admin, &dummy_hash);
+}

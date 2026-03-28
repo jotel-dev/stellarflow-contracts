@@ -225,6 +225,23 @@ impl PriceOracle {
         storage.set(&DataKey::PriceData, &prices);
     }
 
+    /// Upgrade the contract WASM code.
+    ///
+    /// Replaces the on-chain WASM bytecode with the provided hash while preserving
+    /// all contract storage. Strictly restricted to the admin.
+    ///
+    /// # Arguments
+    /// * `admin`    - The current admin address (must sign the transaction)
+    /// * `new_wasm_hash` - The hash of the new WASM blob already uploaded to the ledger
+    ///
+    /// # Panics
+    /// If `admin` is not the current contract admin.
+    pub fn upgrade(env: Env, admin: Address, new_wasm_hash: soroban_sdk::BytesN<32>) {
+        admin.require_auth();
+        crate::auth::_require_admin(&env, &admin);
+        env.deployer().update_current_contract_wasm(new_wasm_hash);
+    }
+
     /// Update the price for a specific asset (authorized backend relayer function)
     ///
     /// # Arguments
