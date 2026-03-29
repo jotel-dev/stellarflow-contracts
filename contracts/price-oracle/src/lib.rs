@@ -78,6 +78,14 @@ pub struct PriceUpdatedEvent {
     pub price: i128,
 }
 
+#[soroban_sdk::contractevent]
+pub struct PriceAnomalyEvent {
+    pub asset: Symbol,
+    pub previous_price: i128,
+    pub attempted_price: i128,
+    pub delta: u128,
+}
+
 /// Returns the signed percentage change in basis points.
 ///
 /// Example: 1_000_000 -> 1_200_000 returns 2_000 (20.00%).
@@ -372,7 +380,13 @@ impl PriceOracle {
         if old_price != 0 {
             let delta = (price - old_price).unsigned_abs();
             if delta > 50 {
-                return Err(Error::PriceDeltaExceeded);
+                env.events().publish_event(&PriceAnomalyEvent {
+                    asset: asset.clone(),
+                    previous_price: old_price,
+                    attempted_price: price,
+                    delta,
+                });
+                return Ok(());
             }
         }
 

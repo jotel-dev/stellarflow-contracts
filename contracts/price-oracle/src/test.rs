@@ -382,6 +382,40 @@ fn test_update_price_emits_event() {
 }
 
 #[test]
+fn test_update_price_delta_limit_rejection_emits_anomaly_event() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(PriceOracle, ());
+    let client = PriceOracleClient::new(&env, &contract_id);
+
+    let admin = <soroban_sdk::Address as soroban_sdk::testutils::Address>::generate(&env);
+    let provider = <soroban_sdk::Address as soroban_sdk::testutils::Address>::generate(&env);
+    let asset = symbol_short!("NGN");
+
+    env.as_contract(&contract_id, || {
+        crate::auth::_set_admin(&env, &soroban_sdk::vec![&env, admin.clone()]);
+        crate::auth::_add_provider(&env, &provider);
+    });
+
+    env.ledger().set_timestamp(1_700_100_000);
+    env.ledger().set_sequence_number(1);
+    client.update_price(&provider, &asset, &1_000_i128, &6u32, &100u32, &3600u64);
+
+    env.ledger().set_timestamp(1_700_100_010);
+    env.ledger().set_sequence_number(2);
+    let result = client.try_update_price(&provider, &asset, &1_100_i128, &6u32, &100u32, &3600u64);
+    assert!(result.is_ok());
+
+    let events = env.events().all();
+    let debug_str = alloc::format!("{:?}", events);
+    assert!(debug_str.contains("price_anomaly_event"));
+
+    let stored = client.get_price(&asset);
+    assert_eq!(stored.price, 1_000_i128);
+}
+
+#[test]
 fn test_calculate_percentage_change_bps_for_increase() {
     assert_eq!(
         calculate_percentage_change_bps(1_000_000, 1_200_000),
