@@ -13,8 +13,8 @@
   ],
   "ledger": {
     "protocol_version": 25,
-    "sequence_number": 1,
-    "timestamp": 1000000,
+    "sequence_number": 0,
+    "timestamp": 1234567900,
     "network_id": "0000000000000000000000000000000000000000000000000000000000000000",
     "base_reserve": 0,
     "min_persistent_entry_ttl": 4096,
@@ -57,7 +57,7 @@
                             "symbol": "decimals"
                           },
                           "val": {
-                            "u32": 6
+                            "u32": 2
                           }
                         },
                         {
@@ -81,7 +81,7 @@
                             "symbol": "timestamp"
                           },
                           "val": {
-                            "u64": "1000000"
+                            "u64": "1234567900"
                           }
                         },
                         {
@@ -114,7 +114,7 @@
                             "symbol": "decimals"
                           },
                           "val": {
-                            "u32": 4
+                            "u32": 2
                           }
                         },
                         {
@@ -138,7 +138,7 @@
                             "symbol": "timestamp"
                           },
                           "val": {
-                            "u64": "1000000"
+                            "u64": "0"
                           }
                         },
                         {
@@ -179,7 +179,7 @@
                             "symbol": "price"
                           },
                           "val": {
-                            "i128": "1500"
+                            "i128": "1600"
                           }
                         },
                         {
@@ -195,7 +195,7 @@
                             "symbol": "timestamp"
                           },
                           "val": {
-                            "u64": "1000000"
+                            "u64": "1234567900"
                           }
                         },
                         {
@@ -215,7 +215,7 @@
           },
           "ext": "v0"
         },
-        "live_until": 4096
+        "live_until": 4095
       },
       {
         "entry": {
@@ -273,7 +273,43 @@
                                   "symbol": "timestamp"
                                 },
                                 "val": {
-                                  "u64": "1000000"
+                                  "u64": "1234567900"
+                                }
+                              }
+                            ]
+                          },
+                          {
+                            "map": [
+                              {
+                                "key": {
+                                  "symbol": "asset"
+                                },
+                                "val": {
+                                  "symbol": "NGN"
+                                }
+                              },
+                              {
+                                "key": {
+                                  "symbol": "event_type"
+                                },
+                                "val": {
+                                  "symbol": "price_updated"
+                                }
+                              },
+                              {
+                                "key": {
+                                  "symbol": "price"
+                                },
+                                "val": {
+                                  "i128": "1600"
+                                }
+                              },
+                              {
+                                "key": {
+                                  "symbol": "timestamp"
+                                },
+                                "val": {
+                                  "u64": "1234567900"
                                 }
                               }
                             ]
@@ -309,7 +345,7 @@
                                   "symbol": "timestamp"
                                 },
                                 "val": {
-                                  "u64": "1000000"
+                                  "u64": "0"
                                 }
                               }
                             ]
@@ -345,7 +381,7 @@
                                   "symbol": "timestamp"
                                 },
                                 "val": {
-                                  "u64": "1000000"
+                                  "u64": "0"
                                 }
                               }
                             ]
@@ -378,5 +414,35 @@
       }
     ]
   },
-  "events": []
+  "events": [
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+        "type_": "contract",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "asset_added_event"
+              }
+            ],
+            "data": {
+              "map": [
+                {
+                  "key": {
+                    "symbol": "symbol"
+                  },
+                  "val": {
+                    "symbol": "GHS"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "failed_call": false
+    }
+  ]
 }

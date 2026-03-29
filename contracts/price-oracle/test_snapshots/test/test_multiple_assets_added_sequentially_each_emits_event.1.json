@@ -8,13 +8,12 @@
     [],
     [],
     [],
-    [],
     []
   ],
   "ledger": {
     "protocol_version": 25,
-    "sequence_number": 1,
-    "timestamp": 1000000,
+    "sequence_number": 0,
+    "timestamp": 0,
     "network_id": "0000000000000000000000000000000000000000000000000000000000000000",
     "base_reserve": 0,
     "min_persistent_entry_ttl": 4096,
@@ -57,7 +56,7 @@
                             "symbol": "decimals"
                           },
                           "val": {
-                            "u32": 6
+                            "u32": 2
                           }
                         },
                         {
@@ -81,7 +80,7 @@
                             "symbol": "timestamp"
                           },
                           "val": {
-                            "u64": "1000000"
+                            "u64": "0"
                           }
                         },
                         {
@@ -114,7 +113,7 @@
                             "symbol": "decimals"
                           },
                           "val": {
-                            "u32": 4
+                            "u32": 2
                           }
                         },
                         {
@@ -138,7 +137,7 @@
                             "symbol": "timestamp"
                           },
                           "val": {
-                            "u64": "1000000"
+                            "u64": "0"
                           }
                         },
                         {
@@ -195,7 +194,7 @@
                             "symbol": "timestamp"
                           },
                           "val": {
-                            "u64": "1000000"
+                            "u64": "0"
                           }
                         },
                         {
@@ -215,7 +214,7 @@
           },
           "ext": "v0"
         },
-        "live_until": 4096
+        "live_until": 4095
       },
       {
         "entry": {
@@ -273,7 +272,7 @@
                                   "symbol": "timestamp"
                                 },
                                 "val": {
-                                  "u64": "1000000"
+                                  "u64": "0"
                                 }
                               }
                             ]
@@ -309,7 +308,7 @@
                                   "symbol": "timestamp"
                                 },
                                 "val": {
-                                  "u64": "1000000"
+                                  "u64": "0"
                                 }
                               }
                             ]
@@ -345,7 +344,7 @@
                                   "symbol": "timestamp"
                                 },
                                 "val": {
-                                  "u64": "1000000"
+                                  "u64": "0"
                                 }
                               }
                             ]
@@ -378,5 +377,35 @@
       }
     ]
   },
-  "events": []
+  "events": [
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+        "type_": "contract",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "asset_added_event"
+              }
+            ],
+            "data": {
+              "map": [
+                {
+                  "key": {
+                    "symbol": "symbol"
+                  },
+                  "val": {
+                    "symbol": "GHS"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "failed_call": false
+    }
+  ]
 }
