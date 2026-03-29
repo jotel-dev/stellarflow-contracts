@@ -294,6 +294,96 @@ impl PriceOracle {
 
         Ok(())
     }
+
+    /// Add a provider to the whitelist.
+    ///
+    /// Only the admin can call this function. Once whitelisted, a provider
+    /// can call `update_price` to submit price data.
+    ///
+    /// # Arguments
+    /// * `env` - The contract environment
+    /// * `admin` - The admin address (must be the current admin)
+    /// * `provider` - The address to whitelist as a provider
+    ///
+    /// # Panics
+    /// If `admin` is not the current contract administrator.
+    pub fn add_provider(env: Env, admin: Address, provider: Address) {
+        // TODO: Implement provider whitelisting
+        // 1. Require admin authorization
+        // 2. Validate admin is the current contract admin
+        // 3. Add provider to whitelist
+        // 4. Emit event (optional but recommended)
+    }
+
+    /// Remove a provider from the whitelist.
+    ///
+    /// Only the admin can call this function. Once removed, a provider
+    /// can no longer call `update_price`.
+    ///
+    /// # Arguments
+    /// * `env` - The contract environment
+    /// * `admin` - The admin address (must be the current admin)
+    /// * `provider` - The address to remove from the whitelist
+    ///
+    /// # Panics
+    /// If `admin` is not the current contract administrator.
+    pub fn remove_provider(env: Env, admin: Address, provider: Address) {
+        // TODO: Implement provider removal
+        // 1. Require admin authorization
+        // 2. Validate admin is the current contract admin
+        // 3. Remove provider from whitelist
+        // 4. Emit event (optional but recommended)
+    }
+
+    /// Pause the contract, preventing price updates.
+    ///
+    /// Only the admin can call this function. When paused, `update_price`
+    /// will reject all calls.
+    ///
+    /// # Arguments
+    /// * `env` - The contract environment
+    /// * `admin` - The admin address (must be the current admin)
+    ///
+    /// # Panics
+    /// If `admin` is not the current contract administrator.
+    pub fn pause_contract(env: Env, admin: Address) {
+        // TODO: Implement contract pause
+        // 1. Require admin authorization
+        // 2. Validate admin is the current contract admin
+        // 3. Set pause flag to true
+        // 4. Emit event (optional but recommended)
+    }
+
+    /// Unpause the contract, allowing price updates to resume.
+    ///
+    /// Only the admin can call this function. When unpaused, `update_price`
+    /// will accept calls from whitelisted providers.
+    ///
+    /// # Arguments
+    /// * `env` - The contract environment
+    /// * `admin` - The admin address (must be the current admin)
+    ///
+    /// # Panics
+    /// If `admin` is not the current contract administrator.
+    pub fn unpause_contract(env: Env, admin: Address) {
+        // TODO: Implement contract unpause
+        // 1. Require admin authorization
+        // 2. Validate admin is the current contract admin
+        // 3. Set pause flag to false
+        // 4. Emit event (optional but recommended)
+    }
+
+    /// Check if the contract is currently paused.
+    ///
+    /// # Arguments
+    /// * `env` - The contract environment
+    ///
+    /// # Returns
+    /// `true` if the contract is paused, `false` otherwise
+    pub fn is_paused(env: Env) -> bool {
+        // TODO: Implement pause status check
+        // Return the current pause state from storage
+    }
 }
 
 mod asset_symbol;
