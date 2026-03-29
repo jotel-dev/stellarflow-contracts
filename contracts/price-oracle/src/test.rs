@@ -719,16 +719,19 @@ fn test_get_prices_returns_all_requested_assets() {
     env.ledger().set_timestamp(1_000_000);
     env.ledger().set_sequence_number(1);
     client.set_price(&ngn, &1_500_i128, &2u32, &3600u64);
-    client.set_price(&kes, &800_i128, &2u32, &3600u64);
-    client.set_price(&ghs, &5_000_i128, &2u32, &3600u64);
+    client.set_price(&kes, &800_i128, &4u32, &3600u64);
+    client.set_price(&ghs, &5_000_i128, &6u32, &3600u64);
 
     let assets = soroban_sdk::vec![&env, ngn.clone(), kes.clone(), ghs.clone()];
     let results = client.get_prices(&assets);
 
     assert_eq!(results.len(), 3);
     assert_eq!(results.get(0).unwrap().unwrap().price, 1_500_i128);
+    assert_eq!(results.get(0).unwrap().unwrap().decimals, 2u32);
     assert_eq!(results.get(1).unwrap().unwrap().price, 800_i128);
+    assert_eq!(results.get(1).unwrap().unwrap().decimals, 4u32);
     assert_eq!(results.get(2).unwrap().unwrap().price, 5_000_i128);
+    assert_eq!(results.get(2).unwrap().unwrap().decimals, 6u32);
 }
 
 #[test]

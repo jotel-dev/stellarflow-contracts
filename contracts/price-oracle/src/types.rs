@@ -33,6 +33,7 @@ pub struct PriceData {
 pub struct PriceEntry {
     pub price: i128,
     pub timestamp: u64,
+    pub decimals: u32,
 }
 
 /// Min/max price bounds for an asset to prevent fat-finger errors.

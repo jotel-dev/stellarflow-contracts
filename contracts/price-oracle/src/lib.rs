@@ -231,6 +231,7 @@ impl PriceOracle {
                     Some(crate::types::PriceEntry {
                         price: pd.price,
                         timestamp: pd.timestamp,
+                        decimals: pd.decimals,
                     })
                 }
             });
