@@ -62,6 +62,11 @@ pub trait StellarFlowTrait {
     /// Returns the address of the contract administrator.
     fn get_admin(env: Env) -> Address;
 
+    /// Returns `true` when the supplied address is an admin.
+    ///
+    /// This allows clients to quickly verify admin status without fetching the full admin address.
+    fn is_admin(env: Env, user: Address) -> bool;
+
     /// Start an admin transfer by setting a pending admin and timestamp.
     fn transfer_admin(env: Env, current_admin: Address, new_admin: Address);
 
@@ -328,6 +333,11 @@ impl PriceOracle {
         crate::auth::_get_admin(&env)
             .get(0)
             .expect("No admin set")
+    }
+
+    /// Returns true if the supplied address is one of the admin addresses.
+    pub fn is_admin(env: Env, user: Address) -> bool {
+        crate::auth::_is_authorized(&env, &user)
     }
 
     /// Starts an admin transfer by storing the pending admin and timestamp.

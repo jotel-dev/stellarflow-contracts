@@ -141,6 +141,22 @@ fn test_get_admin_reader_returns_current_admin() {
 }
 
 #[test]
+fn test_is_admin_returns_true_for_current_admin() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(PriceOracle, ());
+    let client = PriceOracleClient::new(&env, &contract_id);
+    let admin = <soroban_sdk::Address as soroban_sdk::testutils::Address>::generate(&env);
+    let non_admin = <soroban_sdk::Address as soroban_sdk::testutils::Address>::generate(&env);
+
+    client.init_admin(&admin);
+
+    assert!(client.is_admin(&admin));
+    assert!(!client.is_admin(&non_admin));
+}
+
+#[test]
 #[should_panic]
 fn test_init_admin_panics_when_called_twice() {
     let env = Env::default();
