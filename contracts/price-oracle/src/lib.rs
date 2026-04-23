@@ -83,6 +83,11 @@ pub trait StellarFlowTrait {
     /// Useful for the frontend and backend to verify they are talking to the
     /// correct version of the oracle and to track contract compatibility.
     fn get_ledger_version(env: Env) -> u32;
+
+    /// Rescue tokens accidentally sent to this contract.
+    ///
+    /// Only the authorized admin may call this function.
+    fn rescue_tokens(env: Env, admin: Address, token: Address, to: Address, amount: i128);
 }
 
 /// Error types for the price oracle contract
@@ -136,6 +141,19 @@ pub struct ContractInitialized {
 #[soroban_sdk::contractevent]
 pub struct AssetAddedEvent {
     pub symbol: Symbol,
+}
+
+#[soroban_sdk::contractevent]
+pub struct RescueTokensEvent {
+    pub token: Address,
+    pub recipient: Address,
+    pub amount: i128,
+}
+
+/// Generic token contract client interface used to send recovered assets to a safe address.
+#[contractclient(name = "TokenContractClient")]
+pub trait TokenContract {
+    fn transfer(env: Env, from: Address, to: Address, amount: i128);
 }
 
 /// Returns the signed percentage change in basis points.
@@ -546,6 +564,27 @@ impl PriceOracle {
         } else {
             log_event(&env, Symbol::new(&env, "price_updated"), asset, val);
         }
+    }
+
+    /// Rescue tokens accidentally sent to this contract.
+    ///
+    /// Admin-only function to move trapped XLM or other assets out of the contract.
+    pub fn rescue_tokens(env: Env, admin: Address, token: Address, to: Address, amount: i128) {
+        admin.require_auth();
+        crate::auth::_require_authorized(&env, &admin);
+
+        if amount <= 0 {
+            panic_with_error!(&env, Error::InvalidPrice);
+        }
+
+        let token_client = TokenContractClient::new(&env, &token);
+        token_client.transfer(&env.current_contract_address(), &to, &amount);
+
+        env.events().publish_event(&RescueTokensEvent {
+            token,
+            recipient: to,
+            amount,
+        });
     }
 
     /// Upgrade the contract WASM code.
