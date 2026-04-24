@@ -21,6 +21,11 @@ pub trait StellarFlowTrait {
     /// Returns `Error::AssetNotFound` if the asset does not exist or the price is stale.
     fn get_price(env: Env, asset: Symbol) -> Result<PriceData, Error>;
 
+    /// Get the full price data with freshness status for a specific asset.
+    ///
+    /// Returns the last known price with `is_stale = true` when the price has expired.
+    fn get_price_with_status(env: Env, asset: Symbol) -> Result<PriceDataWithStatus, Error>;
+
     /// Get the price data for a specific asset, or `None` if not found.
     ///
     /// Unlike `get_price`, this does not error on stale or missing prices.
@@ -455,6 +460,26 @@ impl PriceOracle {
         }
     }
 
+    /// Returns the last known price data and marks it stale when TTL has expired.
+    pub fn get_price_with_status(env: Env, asset: Symbol) -> Result<PriceDataWithStatus, Error> {
+        let prices: soroban_sdk::Map<Symbol, PriceData> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::PriceData)
+            .unwrap_or_else(|| soroban_sdk::Map::new(&env));
+
+        match prices.get(asset) {
+            Some(price_data) => {
+                let now = env.ledger().timestamp();
+                Ok(PriceDataWithStatus {
+                    is_stale: is_stale(now, price_data.timestamp, price_data.ttl),
+                    data: price_data,
+                })
+            }
+            None => Err(Error::AssetNotFound),
+        }
+    }
+
     /// Returns `None` instead of an error when the asset is not found.
     pub fn get_price_safe(env: Env, asset: Symbol) -> Option<PriceData> {
         let prices: soroban_sdk::Map<Symbol, PriceData> = env
@@ -502,6 +527,32 @@ impl PriceOracle {
                         decimals: pd.decimals,
                     })
                 }
+            });
+            result.push_back(entry);
+        }
+
+        result
+    }
+
+    /// Returns prices for all found assets and marks stale entries with `is_stale = true`.
+    pub fn get_prices_with_status(
+        env: Env,
+        assets: soroban_sdk::Vec<Symbol>,
+    ) -> soroban_sdk::Vec<Option<PriceEntryWithStatus>> {
+        let prices: soroban_sdk::Map<Symbol, PriceData> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::PriceData)
+            .unwrap_or_else(|| soroban_sdk::Map::new(&env));
+
+        let now = env.ledger().timestamp();
+        let mut result = soroban_sdk::Vec::new(&env);
+
+        for asset in assets.iter() {
+            let entry = prices.get(asset).map(|pd| PriceEntryWithStatus {
+                price: pd.price,
+                timestamp: pd.timestamp,
+                is_stale: is_stale(now, pd.timestamp, pd.ttl),
             });
             result.push_back(entry);
         }
