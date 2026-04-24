@@ -1,4 +1,4 @@
-use soroban_sdk::{contracttype, Address};
+use soroban_sdk::{contracttype, Address, Symbol};
 
 /// Storage keys for contract data
 #[contracttype]
