@@ -262,6 +262,44 @@ fn test_get_price_after_update() {
 }
 
 #[test]
+fn test_get_price_with_status_marks_stale_entry() {
+    let env = Env::default();
+    let contract_id = env.register(PriceOracle, ());
+    let client = PriceOracleClient::new(&env, &contract_id);
+    let asset = symbol_short!("NGN");
+
+    env.ledger().set_timestamp(1_000_000);
+    env.ledger().set_sequence_number(1);
+    client.set_price(&asset, &1_500_i128, &2u32, &100u64);
+
+    env.ledger().set_timestamp(1_000_200);
+    env.ledger().set_sequence_number(2);
+
+    let result = client.get_price_with_status(&asset);
+    assert_eq!(result.data.price, 1_500_i128);
+    assert!(result.is_stale);
+}
+
+#[test]
+fn test_get_price_with_status_marks_fresh_entry() {
+    let env = Env::default();
+    let contract_id = env.register(PriceOracle, ());
+    let client = PriceOracleClient::new(&env, &contract_id);
+    let asset = symbol_short!("NGN");
+
+    env.ledger().set_timestamp(1_000_000);
+    env.ledger().set_sequence_number(1);
+    client.set_price(&asset, &1_500_i128, &2u32, &100u64);
+
+    env.ledger().set_timestamp(1_000_050);
+    env.ledger().set_sequence_number(2);
+
+    let result = client.get_price_with_status(&asset);
+    assert_eq!(result.data.price, 1_500_i128);
+    assert!(!result.is_stale);
+}
+
+#[test]
 fn test_get_price_safe_nonexistent_returns_none() {
     let (_, client) = setup();
     assert_eq!(client.get_price_safe(&symbol_short!("NGN")), None);
@@ -383,6 +421,7 @@ fn test_update_price_provider_can_store_new_price() {
     });
 
     client.add_asset(&admin, &asset);
+
     env.ledger().set_timestamp(1_700_000_500);
     env.ledger().set_sequence_number(2);
     client.update_price(&provider, &asset, &1_500_000_i128, &6u32, &100u32, &3600u64);
@@ -412,6 +451,7 @@ fn test_update_price_multiple_updates() {
 
     client.add_asset(&admin, &asset);
     env.ledger().set_sequence_number(1);
+
     client.update_price(&provider, &asset, &1_000_i128, &6u32, &100u32, &3600u64);
     env.ledger().set_sequence_number(2);
     client.update_price(&provider, &asset, &1_020_i128, &6u32, &100u32, &3600u64);
@@ -430,6 +470,7 @@ fn test_update_price_admin_authority() {
 
     let admin = <soroban_sdk::Address as soroban_sdk::testutils::Address>::generate(&env);
     let unauthorized_address = <soroban_sdk::Address as soroban_sdk::testutils::Address>::generate(&env);
+    let asset = symbol_short!("NGN");
 
     env.as_contract(&contract_id, || {
         crate::auth::_set_admin(&env, &soroban_sdk::vec![&env, admin.clone()]);
@@ -438,6 +479,8 @@ fn test_update_price_admin_authority() {
     let asset = symbol_short!("NGN");
     client.add_asset(&admin, &asset);
     // Note: unauthorized_address is NOT added as a provider, so it should fail with NotAuthorized
+    client.add_asset(&admin, &asset);
+
     let result = client.try_update_price(
         &unauthorized_address,
         &asset,
@@ -537,6 +580,7 @@ fn test_update_price_emits_event() {
     });
 
     client.add_asset(&admin, &asset);
+
     env.ledger().set_timestamp(1_700_000_000);
     env.ledger().set_sequence_number(1);
     client.update_price(&provider, &asset, &price, &6u32, &100u32, &3600u64);
@@ -564,6 +608,7 @@ fn test_update_price_delta_limit_rejection_emits_anomaly_event() {
     });
 
     client.add_asset(&admin, &asset);
+
     env.ledger().set_timestamp(1_700_100_000);
     env.ledger().set_sequence_number(1);
     client.update_price(&provider, &asset, &1_000_i128, &6u32, &100u32, &3600u64);
@@ -612,6 +657,8 @@ fn test_calculate_percentage_change_returns_none_for_zero_baseline() {
     assert_eq!(calculate_percentage_difference_bps(0, 1_000_000), None);
 }
 
+#[test]
+fn test_flash_crash_protection_rejects_large_increase() {
 // ============================================================================
 // calculate_price_volatility tests (Circuit Breaker helper)
 // ============================================================================
@@ -689,6 +736,24 @@ fn test_remove_asset_deletes_price_entry() {
 
     let contract_id = env.register(PriceOracle, ());
     let client = PriceOracleClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let provider = Address::generate(&env);
+    let asset = symbol_short!("NGN");
+    let old_price: i128 = 1_000_000;
+    let new_price: i128 = 1_200_000; // 20% increase > 10% threshold
+
+    env.as_contract(&contract_id, || {
+        crate::auth::_set_admin(&env, &admin);
+        crate::auth::_add_provider(&env, &provider);
+    });
+
+    client.set_price(&asset, &old_price);
+
+    // Should reject 20% increase (exceeds 10% MAX_PERCENT_CHANGE)
+    match client.try_update_price(&provider, &asset, &new_price, &6u32, &100u32) {
+        Err(Ok(e)) => assert_eq!(e, Error::FlashCrashDetected),
+        other => panic!("expected FlashCrashDetected, got {:?}", other),
     let admin = <soroban_sdk::Address as soroban_sdk::testutils::Address>::generate(&env);
 
     env.as_contract(&contract_id, || {
@@ -755,12 +820,36 @@ fn test_remove_asset_nonexistent_returns_error() {
 }
 
 #[test]
+fn test_flash_crash_protection_rejects_large_drop() {
 fn test_remove_asset_non_admin_is_rejected() {
     let env = Env::default();
     env.mock_all_auths();
 
     let contract_id = env.register(PriceOracle, ());
     let client = PriceOracleClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let provider = Address::generate(&env);
+    let asset = symbol_short!("NGN");
+    let old_price: i128 = 1_000_000;
+    let new_price: i128 = 800_000; // 20% drop > 10% threshold
+
+    env.as_contract(&contract_id, || {
+        crate::auth::_set_admin(&env, &admin);
+        crate::auth::_add_provider(&env, &provider);
+    });
+
+    client.set_price(&asset, &old_price);
+
+    // Should reject 20% drop (exceeds 10% MAX_PERCENT_CHANGE)
+    match client.try_update_price(&provider, &asset, &new_price, &6u32, &100u32) {
+        Err(Ok(e)) => assert_eq!(e, Error::FlashCrashDetected),
+        other => panic!("expected FlashCrashDetected, got {:?}", other),
+    }
+}
+
+#[test]
+fn test_flash_crash_protection_allows_within_threshold() {
     let admin = <soroban_sdk::Address as soroban_sdk::testutils::Address>::generate(&env);
     let non_admin = <soroban_sdk::Address as soroban_sdk::testutils::Address>::generate(&env);
 
@@ -1054,6 +1143,51 @@ fn test_get_prices_empty_input_returns_empty_vec() {
     assert_eq!(results.len(), 0);
 }
 
+#[test]
+fn test_get_prices_with_status_marks_stale_entry() {
+    let env = Env::default();
+    let contract_id = env.register(PriceOracle, ());
+    let client = PriceOracleClient::new(&env, &contract_id);
+
+    let ngn = symbol_short!("NGN");
+
+    env.ledger().set_timestamp(1_000_000);
+    env.ledger().set_sequence_number(1);
+    client.set_price(&ngn, &1_500_i128, &2u32, &100u64);
+
+    env.ledger().set_timestamp(1_000_200);
+    env.ledger().set_sequence_number(2);
+
+    let assets = soroban_sdk::vec![&env, ngn.clone()];
+    let results = client.get_prices_with_status(&assets);
+
+    assert_eq!(results.len(), 1);
+    let entry = results.get(0).unwrap().unwrap();
+    assert_eq!(entry.price, 1_500_i128);
+    assert!(entry.is_stale);
+}
+
+#[test]
+fn test_get_prices_with_status_returns_none_for_missing_asset() {
+    let env = Env::default();
+    let contract_id = env.register(PriceOracle, ());
+    let client = PriceOracleClient::new(&env, &contract_id);
+
+    let ngn = symbol_short!("NGN");
+    let btc = symbol_short!("BTC");
+
+    env.ledger().set_timestamp(1_000_000);
+    env.ledger().set_sequence_number(1);
+    client.set_price(&ngn, &1_500_i128, &2u32, &3600u64);
+
+    let assets = soroban_sdk::vec![&env, ngn.clone(), btc.clone()];
+    let results = client.get_prices_with_status(&assets);
+
+    assert_eq!(results.len(), 2);
+    assert!(results.get(0).unwrap().is_some());
+    assert!(results.get(1).unwrap().is_none());
+}
+
 // ============================================================================
 // Min/Max Price Bounds Tests
 // ============================================================================
@@ -1097,6 +1231,28 @@ fn test_update_price_within_bounds_succeeds() {
     let contract_id = env.register(PriceOracle, ());
     let client = PriceOracleClient::new(&env, &contract_id);
 
+    let admin = Address::generate(&env);
+    let provider = Address::generate(&env);
+    let asset = symbol_short!("NGN");
+    let old_price: i128 = 1_000_000;
+    let new_price: i128 = 1_050_000; // 5% increase < 10% threshold
+
+    env.as_contract(&contract_id, || {
+        crate::auth::_set_admin(&env, &admin);
+        crate::auth::_add_provider(&env, &provider);
+    });
+
+    client.set_price(&asset, &old_price);
+
+    // Should allow 5% increase (within 10% MAX_PERCENT_CHANGE)
+    client.update_price(&provider, &asset, &new_price, &6u32, &100u32);
+
+    let price_data = client.get_price(&asset);
+    assert_eq!(price_data.price, new_price);
+}
+
+#[test]
+fn test_flash_crash_protection_allows_exact_threshold() {
     let admin = <soroban_sdk::Address as soroban_sdk::testutils::Address>::generate(&env);
     let provider = <soroban_sdk::Address as soroban_sdk::testutils::Address>::generate(&env);
     let asset = symbol_short!("NGN");
@@ -1107,6 +1263,7 @@ fn test_update_price_within_bounds_succeeds() {
     });
 
     client.add_asset(&admin, &asset);
+
     // Set bounds: 500 to 2000
     client.set_price_bounds(&admin, &asset, &500_i128, &2_000_i128);
 
@@ -1126,6 +1283,28 @@ fn test_update_price_below_min_bound_rejected() {
     let contract_id = env.register(PriceOracle, ());
     let client = PriceOracleClient::new(&env, &contract_id);
 
+    let admin = Address::generate(&env);
+    let provider = Address::generate(&env);
+    let asset = symbol_short!("NGN");
+    let old_price: i128 = 1_000_000;
+    let new_price: i128 = 1_100_000; // Exactly 10% increase = threshold
+
+    env.as_contract(&contract_id, || {
+        crate::auth::_set_admin(&env, &admin);
+        crate::auth::_add_provider(&env, &provider);
+    });
+
+    client.set_price(&asset, &old_price);
+
+    // Should allow exactly 10% increase (at threshold, not exceeding)
+    client.update_price(&provider, &asset, &new_price, &6u32, &100u32);
+
+    let price_data = client.get_price(&asset);
+    assert_eq!(price_data.price, new_price);
+}
+
+#[test]
+fn test_flash_crash_protection_allows_first_price_update() {
     let admin = <soroban_sdk::Address as soroban_sdk::testutils::Address>::generate(&env);
     let provider = <soroban_sdk::Address as soroban_sdk::testutils::Address>::generate(&env);
     let asset = symbol_short!("NGN");
@@ -1136,6 +1315,7 @@ fn test_update_price_below_min_bound_rejected() {
     });
 
     client.add_asset(&admin, &asset);
+
     // Set bounds: 500 to 2000
     client.set_price_bounds(&admin, &asset, &500_i128, &2_000_i128);
 
@@ -1165,6 +1345,7 @@ fn test_update_price_above_max_bound_rejected() {
     });
 
     client.add_asset(&admin, &asset);
+
     // Set bounds: 500 to 2000
     client.set_price_bounds(&admin, &asset, &500_i128, &2_000_i128);
 
@@ -1184,6 +1365,25 @@ fn test_update_price_at_exact_bounds_succeeds() {
     let contract_id = env.register(PriceOracle, ());
     let client = PriceOracleClient::new(&env, &contract_id);
 
+    let admin = Address::generate(&env);
+    let provider = Address::generate(&env);
+    let asset = symbol_short!("NGN");
+    let price: i128 = 1_500_000;
+
+    env.as_contract(&contract_id, || {
+        crate::auth::_set_admin(&env, &admin);
+        crate::auth::_add_provider(&env, &provider);
+    });
+
+    // First price update (no previous price) should always be allowed
+    client.update_price(&provider, &asset, &price, &6u32, &100u32);
+
+    let price_data = client.get_price(&asset);
+    assert_eq!(price_data.price, price);
+}
+
+#[test]
+fn test_flash_crash_protection_rejects_just_over_threshold() {
     let admin = <soroban_sdk::Address as soroban_sdk::testutils::Address>::generate(&env);
     let provider = <soroban_sdk::Address as soroban_sdk::testutils::Address>::generate(&env);
     let asset = symbol_short!("NGN");
@@ -1194,6 +1394,7 @@ fn test_update_price_at_exact_bounds_succeeds() {
     });
 
     client.add_asset(&admin, &asset);
+
     // Set bounds: 500 to 2000
     client.set_price_bounds(&admin, &asset, &500_i128, &2_000_i128);
 
@@ -1218,6 +1419,24 @@ fn test_update_price_no_bounds_set_allows_any_valid_price() {
     let contract_id = env.register(PriceOracle, ());
     let client = PriceOracleClient::new(&env, &contract_id);
 
+    let admin = Address::generate(&env);
+    let provider = Address::generate(&env);
+    let asset = symbol_short!("NGN");
+    let old_price: i128 = 1_000_000;
+    let new_price: i128 = 1_100_001; // Just over 10% (> 1000 bps)
+
+    env.as_contract(&contract_id, || {
+        crate::auth::_set_admin(&env, &admin);
+        crate::auth::_add_provider(&env, &provider);
+    });
+
+    client.set_price(&asset, &old_price);
+
+    // Should reject price change just over 10% threshold
+    match client.try_update_price(&provider, &asset, &new_price, &6u32, &100u32) {
+        Err(Ok(e)) => assert_eq!(e, Error::FlashCrashDetected),
+        other => panic!("expected FlashCrashDetected, got {:?}", other),
+    }
     let admin = <soroban_sdk::Address as soroban_sdk::testutils::Address>::generate(&env);
     let provider = <soroban_sdk::Address as soroban_sdk::testutils::Address>::generate(&env);
     let asset = symbol_short!("NGN");
@@ -1228,6 +1447,7 @@ fn test_update_price_no_bounds_set_allows_any_valid_price() {
     });
 
     client.add_asset(&admin, &asset);
+
     // No bounds set — should accept any positive price
     let result = client.try_update_price(&provider, &asset, &999_999_999_i128, &6u32, &100u32, &3600u64);
     assert!(result.is_ok());

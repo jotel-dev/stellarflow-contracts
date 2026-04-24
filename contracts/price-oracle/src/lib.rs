@@ -21,6 +21,11 @@ pub trait StellarFlowTrait {
     /// Returns `Error::AssetNotFound` if the asset does not exist or the price is stale.
     fn get_price(env: Env, asset: Symbol) -> Result<PriceData, Error>;
 
+    /// Get the full price data with freshness status for a specific asset.
+    ///
+    /// Returns the last known price with `is_stale = true` when the price has expired.
+    fn get_price_with_status(env: Env, asset: Symbol) -> Result<PriceDataWithStatus, Error>;
+
     /// Get the price data for a specific asset, or `None` if not found.
     ///
     /// Unlike `get_price`, this does not error on stale or missing prices.
@@ -116,6 +121,10 @@ pub trait StellarFlowTrait {
     fn get_admin_count(env: Env) -> u32;
 }
 
+/// Maximum allowed percentage change between price updates (10% = 1000 basis points).
+/// Any price update exceeding this threshold will be rejected to prevent flash crashes.
+const MAX_PERCENT_CHANGE_BPS: i128 = 1_000;
+
 /// Error types for the price oracle contract
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
@@ -129,6 +138,8 @@ pub enum Error {
     InvalidAssetSymbol = 3,
     /// Price must be greater than zero.
     InvalidPrice = 4,
+    /// Price change exceeds maximum allowed threshold (flash crash protection).
+    FlashCrashDetected = 5,
     /// Caller is not authorized to perform this action.
     NotAuthorized = 5,
     /// Contract or admin has already been initialized.
@@ -419,7 +430,7 @@ impl PriceOracle {
 
         track_asset(&env, asset.clone());
 
-        let storage = env.storage().persistent();
+        let storage = env.storage().temporary();
         let mut prices: soroban_sdk::Map<Symbol, PriceData> = storage
             .get(&DataKey::PriceData)
             .unwrap_or_else(|| soroban_sdk::Map::new(&env));
@@ -499,6 +510,10 @@ impl PriceOracle {
         let admins = soroban_sdk::vec![&env, new_admin.clone()];
         crate::auth::_set_admin(&env, &admins);
 
+        env.storage()
+            .instance()
+            .set(&DataKey::AdminUpdateTimestamp, &now);
+
         env.storage().instance().remove(&DataKey::PendingAdmin);
         env.storage()
             .instance()
@@ -576,6 +591,7 @@ impl PriceOracle {
 
         // Fallback to legacy PriceData storage
         let storage = env.storage().persistent();
+        let storage = env.storage().temporary();
         let prices: soroban_sdk::Map<Symbol, PriceData> = storage
             .get(&DataKey::PriceData)
             .unwrap_or_else(|| soroban_sdk::Map::new(&env));
@@ -592,11 +608,31 @@ impl PriceOracle {
         }
     }
 
+    /// Returns the last known price data and marks it stale when TTL has expired.
+    pub fn get_price_with_status(env: Env, asset: Symbol) -> Result<PriceDataWithStatus, Error> {
+        let prices: soroban_sdk::Map<Symbol, PriceData> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::PriceData)
+            .unwrap_or_else(|| soroban_sdk::Map::new(&env));
+
+        match prices.get(asset) {
+            Some(price_data) => {
+                let now = env.ledger().timestamp();
+                Ok(PriceDataWithStatus {
+                    is_stale: is_stale(now, price_data.timestamp, price_data.ttl),
+                    data: price_data,
+                })
+            }
+            None => Err(Error::AssetNotFound),
+        }
+    }
+
     /// Returns `None` instead of an error when the asset is not found.
     pub fn get_price_safe(env: Env, asset: Symbol) -> Option<PriceData> {
         let prices: soroban_sdk::Map<Symbol, PriceData> = env
             .storage()
-            .persistent()
+            .temporary()
             .get(&DataKey::PriceData)
             .unwrap_or_else(|| soroban_sdk::Map::new(&env));
         prices.get(asset)
@@ -621,7 +657,7 @@ impl PriceOracle {
     ) -> soroban_sdk::Vec<Option<crate::types::PriceEntry>> {
         let prices: soroban_sdk::Map<Symbol, PriceData> = env
             .storage()
-            .persistent()
+            .temporary()
             .get(&DataKey::PriceData)
             .unwrap_or_else(|| soroban_sdk::Map::new(&env));
 
@@ -646,6 +682,32 @@ impl PriceOracle {
         result
     }
 
+    /// Returns prices for all found assets and marks stale entries with `is_stale = true`.
+    pub fn get_prices_with_status(
+        env: Env,
+        assets: soroban_sdk::Vec<Symbol>,
+    ) -> soroban_sdk::Vec<Option<PriceEntryWithStatus>> {
+        let prices: soroban_sdk::Map<Symbol, PriceData> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::PriceData)
+            .unwrap_or_else(|| soroban_sdk::Map::new(&env));
+
+        let now = env.ledger().timestamp();
+        let mut result = soroban_sdk::Vec::new(&env);
+
+        for asset in assets.iter() {
+            let entry = prices.get(asset).map(|pd| PriceEntryWithStatus {
+                price: pd.price,
+                timestamp: pd.timestamp,
+                is_stale: is_stale(now, pd.timestamp, pd.ttl),
+            });
+            result.push_back(entry);
+        }
+
+        result
+    }
+
     /// Returns a vector of all currently tracked asset symbols.
     pub fn get_all_assets(env: Env) -> soroban_sdk::Vec<Symbol> {
         get_tracked_assets(&env)
@@ -654,6 +716,27 @@ impl PriceOracle {
     /// Returns the total number of currently tracked asset symbols.
     pub fn get_asset_count(env: Env) -> u32 {
         get_tracked_assets(&env).len()
+    }
+
+    /// Store a human-readable description for an asset (e.g. "Nigerian Naira").
+    ///
+    /// Only the admin can call this.
+    pub fn set_asset_description(env: Env, admin: Address, asset: Symbol, description: soroban_sdk::String) {
+        admin.require_auth();
+        crate::auth::_require_authorized(&env, &admin);
+        env.storage()
+            .persistent()
+            .set(&DataKey::AssetDescription(asset), &description);
+    }
+
+    /// Get the human-readable description for an asset.
+    ///
+    /// Returns `Error::AssetNotFound` if no description has been set.
+    pub fn get_asset_description(env: Env, asset: Symbol) -> Result<soroban_sdk::String, Error> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::AssetDescription(asset))
+            .ok_or(Error::AssetNotFound)
     }
 
     /// Set the price data for a specific asset.
@@ -699,6 +782,8 @@ impl PriceOracle {
                     asset: asset.clone(),
                     price: val,
                 });
+                env.events().publish_event(&PriceUpdatedEvent { asset: asset.clone(), price: val });
+                log_event(&env, Symbol::new(&env, "price_updated"), asset, val);
                 return;
             }
         }
@@ -769,7 +854,7 @@ impl PriceOracle {
         admin.require_auth();
         crate::auth::_require_authorized(&env, &admin);
 
-        let storage = env.storage().persistent();
+        let storage = env.storage().temporary();
         let mut prices: soroban_sdk::Map<Symbol, PriceData> = storage
             .get(&DataKey::PriceData)
             .unwrap_or_else(|| soroban_sdk::Map::new(&env));
@@ -831,10 +916,20 @@ impl PriceOracle {
         if has_provider_submitted(&buffer, &source) {
             return Err(Error::AlreadyInitialized);
         }
+        let storage = env.storage().temporary();
+        let mut prices: soroban_sdk::Map<Symbol, PriceData> = storage
+            .get(&DataKey::PriceData)
+            .unwrap_or_else(|| soroban_sdk::Map::new(&env));
 
         // Get the old median price for anomaly detection
         let old_price = calculate_median_from_buffer(&env, &buffer).unwrap_or(0);
 
+        // Flash crash protection: reject if price change exceeds MAX_PERCENT_CHANGE
+        if old_price > 0 {
+            if let Some(pct_change_bps) = calculate_percentage_difference_bps(old_price, price) {
+                if pct_change_bps > MAX_PERCENT_CHANGE_BPS {
+                    return Err(Error::FlashCrashDetected);
+                }
         if old_price != 0 {
             let delta = (price - old_price).unsigned_abs();
             if delta > 50 {
@@ -916,7 +1011,7 @@ impl PriceOracle {
         assert!(min_price > 0 && max_price > 0, "bounds must be positive");
         assert!(min_price <= max_price, "min_price must be <= max_price");
 
-        let storage = env.storage().persistent();
+        let storage = env.storage().temporary();
         let mut bounds_map: soroban_sdk::Map<Symbol, PriceBounds> = storage
             .get(&DataKey::PriceBoundsData)
             .unwrap_or_else(|| soroban_sdk::Map::new(&env));
@@ -935,7 +1030,7 @@ impl PriceOracle {
     pub fn get_price_bounds(env: Env, asset: Symbol) -> Option<PriceBounds> {
         let bounds_map: soroban_sdk::Map<Symbol, PriceBounds> = env
             .storage()
-            .persistent()
+            .temporary()
             .get(&DataKey::PriceBoundsData)
             .unwrap_or_else(|| soroban_sdk::Map::new(&env));
         bounds_map.get(asset)
