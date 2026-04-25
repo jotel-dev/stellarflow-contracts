@@ -7,7 +7,6 @@
   "auth": [
     [],
     [],
-    [],
     []
   ],
   "ledger": {
@@ -30,68 +29,62 @@
               "key": {
                 "vec": [
                   {
-                    "symbol": "PriceData"
+                    "symbol": "VerifiedPrice"
+                  },
+                  {
+                    "symbol": "GHS"
                   }
                 ]
               },
-              "durability": "persistent",
+              "durability": "temporary",
               "val": {
                 "map": [
                   {
                     "key": {
-                      "symbol": "GHS"
+                      "symbol": "confidence_score"
                     },
                     "val": {
-                      "map": [
-                        {
-                          "key": {
-                            "symbol": "confidence_score"
-                          },
-                          "val": {
-                            "u32": 100
-                          }
-                        },
-                        {
-                          "key": {
-                            "symbol": "decimals"
-                          },
-                          "val": {
-                            "u32": 2
-                          }
-                        },
-                        {
-                          "key": {
-                            "symbol": "price"
-                          },
-                          "val": {
-                            "i128": "5000"
-                          }
-                        },
-                        {
-                          "key": {
-                            "symbol": "provider"
-                          },
-                          "val": {
-                            "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM"
-                          }
-                        },
-                        {
-                          "key": {
-                            "symbol": "timestamp"
-                          },
-                          "val": {
-                            "u64": "3001000"
-                          }
-                        },
-                        {
-                          "key": {
-                            "symbol": "ttl"
-                          },
-                          "val": {
-                            "u64": "3600"
-                          }
-                        }
-                      ]
+                      "u32": 100
+                    }
+                  },
+                  {
+                    "key": {
+                      "symbol": "decimals"
+                    },
+                    "val": {
+                      "u32": 2
+                    }
+                  },
+                  {
+                    "key": {
+                      "symbol": "price"
+                    },
+                    "val": {
+                      "i128": "5000"
+                    }
+                  },
+                  {
+                    "key": {
+                      "symbol": "provider"
+                    },
+                    "val": {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM"
+                    }
+                  },
+                  {
+                    "key": {
+                      "symbol": "timestamp"
+                    },
+                    "val": {
+                      "u64": "3001000"
+                    }
+                  },
+                  {
+                    "key": {
+                      "symbol": "ttl"
+                    },
+                    "val": {
+                      "u64": "3600"
                     }
                   }
                 ]
@@ -100,7 +93,7 @@
           },
           "ext": "v0"
         },
-        "live_until": 4096
+        "live_until": 16
       },
       {
         "entry": {
@@ -243,5 +236,43 @@
       }
     ]
   },
-  "events": []
+  "events": [
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+        "type_": "contract",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "price_updated_event"
+              }
+            ],
+            "data": {
+              "map": [
+                {
+                  "key": {
+                    "symbol": "asset"
+                  },
+                  "val": {
+                    "symbol": "GHS"
+                  }
+                },
+                {
+                  "key": {
+                    "symbol": "price"
+                  },
+                  "val": {
+                    "i128": "5000"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "failed_call": false
+    }
+  ]
 }
