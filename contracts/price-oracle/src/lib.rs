@@ -19,9 +19,10 @@ const MAX_CLEAR_ASSETS: u32 = 20;
 pub trait StellarFlowTrait {
     /// Get the full price data for a specific asset.
     ///
-    /// Returns the complete price information including timestamp, decimals, confidence score, and TTL.
+    /// When `verified` is `true`, reads from the `VerifiedPrice` bucket (default for internal math).
+    /// When `verified` is `false`, reads from the `CommunityPrice` bucket.
     /// Returns `Error::AssetNotFound` if the asset does not exist or the price is stale.
-    fn get_price(env: Env, asset: Symbol) -> Result<PriceData, Error>;
+    fn get_price(env: Env, asset: Symbol, verified: bool) -> Result<PriceData, Error>;
 
     /// Get the full price data with freshness status for a specific asset.
     ///
@@ -63,6 +64,14 @@ pub trait StellarFlowTrait {
     ///
     /// The new asset is added to the internal asset list and initialized with a zero-price placeholder.
     fn add_asset(env: Env, admin: Address, asset: Symbol) -> Result<(), Error>;
+
+    /// Set an absolute floor price for an asset.
+    ///
+    /// Any attempted price update below this value will be rejected.
+    fn set_price_floor(env: Env, admin: Address, asset: Symbol, price_floor: i128);
+
+    /// Get the configured absolute floor price for an asset, if any.
+    fn get_price_floor(env: Env, asset: Symbol) -> Option<i128>;
 
     /// Get the current admin address.
     ///
@@ -123,9 +132,19 @@ pub trait StellarFlowTrait {
     fn get_admin_count(env: Env) -> u32;
 }
 
+#[contractclient(name = "TokenContractClient")]
+pub trait TokenContractTrait {
+    fn transfer(env: Env, from: Address, to: Address, amount: i128);
+}
+
 /// Maximum allowed percentage change between price updates (10% = 1000 basis points).
 /// Any price update exceeding this threshold will be rejected to prevent flash crashes.
 const MAX_PERCENT_CHANGE_BPS: i128 = 1_000;
+
+/// Percentage move threshold (5% = 500 basis points) above which a "cross_call"
+/// volatility event is published so downstream contracts (e.g. liquidation bots)
+/// can react without polling.
+const VOLATILITY_THRESHOLD_BPS: i128 = 500;
 
 /// Error types for the price oracle contract
 #[contracterror]
@@ -143,23 +162,21 @@ pub enum Error {
     /// Price change exceeds maximum allowed threshold (flash crash protection).
     FlashCrashDetected = 5,
     /// Caller is not authorized to perform this action.
-    NotAuthorized = 13,
+    NotAuthorized = 6,
     /// Contract or admin has already been initialized.
-    AlreadyInitialized = 6,
+    AlreadyInitialized = 7,
     /// Price change exceeds the allowed delta limit in a single update.
-    PriceDeltaExceeded = 7,
+    PriceDeltaExceeded = 8,
     /// Price is outside the configured min/max bounds for the asset.
-    PriceOutOfBounds = 8,
+    PriceOutOfBounds = 9,
     /// Provider weight must be between 0 and 100.
-    InvalidWeight = 9,
+    InvalidWeight = 10,
     /// Multi-signature validation failed - insufficient or invalid admin signatures.
-    MultiSigValidationFailed = 10,
+    MultiSigValidationFailed = 11,
     /// Cannot add more admins - maximum of 3 admins allowed.
-    MaxAdminsReached = 11,
+    MaxAdminsReached = 12,
     /// Cannot remove admin - would leave contract without any admins.
-    CannotRemoveLastAdmin = 12,
-    /// Requested asset batch exceeds the supported maximum.
-    TooManyAssets = 13,
+    CannotRemoveLastAdmin = 13,
 }
 
 #[contract]
@@ -200,6 +217,11 @@ pub struct RescueTokensEvent {
     pub token: Address,
     pub recipient: Address,
     pub amount: i128,
+}
+
+#[soroban_sdk::contractclient(name = "TokenContractClient")]
+pub trait TokenContract {
+    fn transfer(env: Env, from: Address, to: Address, amount: i128);
 }
 
 /// Returns the signed percentage change in basis points.
@@ -411,13 +433,31 @@ fn log_event(env: &Env, event_type: Symbol, asset: Symbol, price: i128) {
     env.storage().instance().set(&DataKey::RecentEvents, &events);
 }
 
+fn read_price_floor(env: &Env, asset: &Symbol) -> Option<i128> {
+    let floors: soroban_sdk::Map<Symbol, i128> = env
+        .storage()
+        .persistent()
+        .get(&DataKey::PriceFloorData)
+        .unwrap_or_else(|| soroban_sdk::Map::new(env));
+    floors.get(asset.clone())
+}
+
+fn enforce_price_floor(env: &Env, asset: &Symbol, price: i128) -> Result<(), Error> {
+    if let Some(price_floor) = read_price_floor(env, asset) {
+        if price < price_floor {
+            return Err(Error::PriceOutOfBounds);
+        }
+    }
+
+    Ok(())
+}
+
 #[contractimpl]
 impl PriceOracle {
     /// Initialize the contract with admin and base currency pairs.
     /// Can only be called once.
     pub fn initialize(env: Env, admin: Address, base_currency_pairs: soroban_sdk::Vec<Symbol>) {
-        _require_not_destroyed(&env);
-        if env.storage().instance().has(&DataKey::Admin) {
+        if env.storage().instance().has(&DataKey::Initialized) || crate::auth::_has_admin(&env) {
             panic_with_error!(&env, Error::AlreadyInitialized);
         }
 
@@ -465,7 +505,8 @@ impl PriceOracle {
 
     /// Add a new asset to the tracked asset list.
     ///
-    /// The new asset is added to the internal asset list and initialized with a zero-price placeholder.
+    /// The new asset is added to the internal asset list and initialized with a zero-price placeholder
+    /// in the `VerifiedPrice` bucket.
     pub fn add_asset(env: Env, admin: Address, asset: Symbol) -> Result<(), Error> {
         _require_not_destroyed(&env);
         admin.require_auth();
@@ -473,15 +514,11 @@ impl PriceOracle {
 
         track_asset(&env, asset.clone());
 
-        let storage = env.storage().temporary();
-        let mut prices: soroban_sdk::Map<Symbol, PriceData> = storage
-            .get(&DataKey::PriceData)
-            .unwrap_or_else(|| soroban_sdk::Map::new(&env));
-
-        if !prices.contains_key(asset.clone()) {
-            prices.set(
-                asset.clone(),
-                PriceData {
+        let key = DataKey::VerifiedPrice(asset.clone());
+        if env.storage().temporary().get::<DataKey, PriceData>(&key).is_none() {
+            env.storage().temporary().set(
+                &key,
+                &PriceData {
                     price: 0,
                     timestamp: env.ledger().timestamp(),
                     provider: env.current_contract_address(),
@@ -490,7 +527,6 @@ impl PriceOracle {
                     ttl: 0,
                 },
             );
-            storage.set(&DataKey::PriceData, &prices);
         }
 
         env.events().publish_event(&AssetAddedEvent { symbol: asset.clone() });
@@ -591,58 +627,21 @@ impl PriceOracle {
     }
 
     /// Get the price data for a specific asset.
-    /// Returns error if price is stale.
-    /// 
-    /// This function now returns the median price from the relayer buffer
-    /// if multiple submissions exist for the current ledger.
-    pub fn get_price(env: Env, asset: Symbol) -> Result<PriceData, Error> {
-        // First, try to get the median from the buffer
-        let buffer = get_price_buffer(&env, asset.clone());
-        
-        // Calculate median if buffer has entries
-        if buffer.entries.len() > 0 {
-            let median_price = calculate_median_from_buffer(&env, &buffer).unwrap_or(0);
-            
-            // Check if buffer is stale
-            let now = env.ledger().timestamp();
-            if is_stale(now, buffer.entries.get(0).unwrap().timestamp, buffer.ttl) {
-                return Err(Error::AssetNotFound);
-            }
+    ///
+    /// When `verified` is `true` (the default for internal math), data is read
+    /// from the `VerifiedPrice` bucket — written only by whitelisted providers
+    /// and admins.  When `verified` is `false`, data is read from the
+    /// `CommunityPrice` bucket instead.
+    ///
+    /// Returns `Error::AssetNotFound` when the asset is missing or stale.
+    pub fn get_price(env: Env, asset: Symbol, verified: bool) -> Result<PriceData, Error> {
+        let key = if verified {
+            DataKey::VerifiedPrice(asset)
+        } else {
+            DataKey::CommunityPrice(asset)
+        };
 
-            // Get confidence score and other metadata from legacy storage
-            let storage = env.storage().persistent();
-            let prices: soroban_sdk::Map<Symbol, PriceData> = storage
-                .get(&DataKey::PriceData)
-                .unwrap_or_else(|| soroban_sdk::Map::new(&env));
-            
-            let metadata = prices.get(asset.clone()).unwrap_or(PriceData {
-                price: 0,
-                timestamp: 0,
-                provider: env.current_contract_address(),
-                decimals: buffer.decimals,
-                confidence_score: 100,
-                ttl: buffer.ttl,
-            });
-
-            // Return PriceData with median price but preserved metadata
-            return Ok(PriceData {
-                price: median_price,
-                timestamp: buffer.entries.get(0).unwrap().timestamp,
-                provider: buffer.entries.get(0).unwrap().provider,
-                decimals: buffer.decimals,
-                confidence_score: metadata.confidence_score,
-                ttl: buffer.ttl,
-            });
-        }
-
-        // Fallback to legacy PriceData storage
-        let storage = env.storage().persistent();
-        let storage = env.storage().temporary();
-        let prices: soroban_sdk::Map<Symbol, PriceData> = storage
-            .get(&DataKey::PriceData)
-            .unwrap_or_else(|| soroban_sdk::Map::new(&env));
-
-        match prices.get(asset) {
+        match env.storage().temporary().get::<DataKey, PriceData>(&key) {
             Some(price_data) => {
                 let now = env.ledger().timestamp();
                 if is_stale(now, price_data.timestamp, price_data.ttl) {
@@ -655,14 +654,13 @@ impl PriceOracle {
     }
 
     /// Returns the last known price data and marks it stale when TTL has expired.
+    /// Always reads from the `VerifiedPrice` bucket.
     pub fn get_price_with_status(env: Env, asset: Symbol) -> Result<PriceDataWithStatus, Error> {
-        let prices: soroban_sdk::Map<Symbol, PriceData> = env
+        match env
             .storage()
-            .persistent()
-            .get(&DataKey::PriceData)
-            .unwrap_or_else(|| soroban_sdk::Map::new(&env));
-
-        match prices.get(asset) {
+            .temporary()
+            .get::<DataKey, PriceData>(&DataKey::VerifiedPrice(asset))
+        {
             Some(price_data) => {
                 let now = env.ledger().timestamp();
                 Ok(PriceDataWithStatus {
@@ -675,20 +673,19 @@ impl PriceOracle {
     }
 
     /// Returns `None` instead of an error when the asset is not found.
+    /// Always reads from the `VerifiedPrice` bucket.
     pub fn get_price_safe(env: Env, asset: Symbol) -> Option<PriceData> {
-        let prices: soroban_sdk::Map<Symbol, PriceData> = env
-            .storage()
+        env.storage()
             .temporary()
-            .get(&DataKey::PriceData)
-            .unwrap_or_else(|| soroban_sdk::Map::new(&env));
-        prices.get(asset)
+            .get::<DataKey, PriceData>(&DataKey::VerifiedPrice(asset))
     }
 
     /// Get the most recent price for a specific asset.
     ///
+    /// Always reads from the `VerifiedPrice` bucket.
     /// Returns the price value as an i128, or an error if the asset is not found.
     pub fn get_last_price(env: Env, asset: Symbol) -> Result<i128, Error> {
-        let price_data = Self::get_price(env, asset)?;
+        let price_data = Self::get_price(env, asset, true)?;
         Ok(price_data.price)
     }
 
@@ -697,31 +694,30 @@ impl PriceOracle {
     /// Returns a `Vec<Option<PriceEntry>>` in the same order as `assets`.
     /// Each entry is `Some(PriceEntry)` when the asset exists and is not stale,
     /// or `None` when it is missing or stale — matching `get_price_safe` semantics.
+    /// Always reads from the `VerifiedPrice` bucket.
     pub fn get_prices(
         env: Env,
         assets: soroban_sdk::Vec<Symbol>,
     ) -> soroban_sdk::Vec<Option<crate::types::PriceEntry>> {
-        let prices: soroban_sdk::Map<Symbol, PriceData> = env
-            .storage()
-            .temporary()
-            .get(&DataKey::PriceData)
-            .unwrap_or_else(|| soroban_sdk::Map::new(&env));
-
         let now = env.ledger().timestamp();
         let mut result = soroban_sdk::Vec::new(&env);
 
         for asset in assets.iter() {
-            let entry = prices.get(asset).and_then(|pd| {
-                if is_stale(now, pd.timestamp, pd.ttl) {
-                    None
-                } else {
-                    Some(crate::types::PriceEntry {
-                        price: pd.price,
-                        timestamp: pd.timestamp,
-                        decimals: pd.decimals,
-                    })
-                }
-            });
+            let entry = env
+                .storage()
+                .temporary()
+                .get::<DataKey, PriceData>(&DataKey::VerifiedPrice(asset))
+                .and_then(|pd| {
+                    if is_stale(now, pd.timestamp, pd.ttl) {
+                        None
+                    } else {
+                        Some(crate::types::PriceEntry {
+                            price: pd.price,
+                            timestamp: pd.timestamp,
+                            decimals: pd.decimals,
+                        })
+                    }
+                });
             result.push_back(entry);
         }
 
@@ -729,25 +725,24 @@ impl PriceOracle {
     }
 
     /// Returns prices for all found assets and marks stale entries with `is_stale = true`.
+    /// Always reads from the `VerifiedPrice` bucket.
     pub fn get_prices_with_status(
         env: Env,
         assets: soroban_sdk::Vec<Symbol>,
     ) -> soroban_sdk::Vec<Option<PriceEntryWithStatus>> {
-        let prices: soroban_sdk::Map<Symbol, PriceData> = env
-            .storage()
-            .persistent()
-            .get(&DataKey::PriceData)
-            .unwrap_or_else(|| soroban_sdk::Map::new(&env));
-
         let now = env.ledger().timestamp();
         let mut result = soroban_sdk::Vec::new(&env);
 
         for asset in assets.iter() {
-            let entry = prices.get(asset).map(|pd| PriceEntryWithStatus {
-                price: pd.price,
-                timestamp: pd.timestamp,
-                is_stale: is_stale(now, pd.timestamp, pd.ttl),
-            });
+            let entry = env
+                .storage()
+                .temporary()
+                .get::<DataKey, PriceData>(&DataKey::VerifiedPrice(asset))
+                .map(|pd| PriceEntryWithStatus {
+                    price: pd.price,
+                    timestamp: pd.timestamp,
+                    is_stale: is_stale(now, pd.timestamp, pd.ttl),
+                });
             result.push_back(entry);
         }
 
@@ -786,32 +781,28 @@ impl PriceOracle {
             .ok_or(Error::AssetNotFound)
     }
 
-    /// Set the price data for a specific asset.
+    /// Set the price data for a specific asset (admin/internal use).
+    ///
+    /// Writes to the `VerifiedPrice` bucket. Community submissions must use
+    /// `submit_community_price` instead.
     ///
     /// # Gas optimisation — Zero-Write for identical prices
     /// When the incoming `val` is identical to the currently stored price the
     /// full `storage().set()` call is skipped entirely.  Only the timestamp
     /// field is updated in-place, saving the write fee for the price value
     /// while keeping the freshness indicator current.
-    ///
-    /// # Arguments
-    /// * `env` - The contract environment
-    /// * `asset` - The asset symbol to set
-    /// * `val` - The price value
-    /// * `decimals` - Number of decimals for the price
-    /// * `ttl` - Time-to-live in seconds for this price (per-asset expiration)
     pub fn set_price(env: Env, asset: Symbol, val: i128, decimals: u32, ttl: u64) {
         _require_not_destroyed(&env);
         if !is_valid(val) {
             panic_with_error!(&env, Error::InvalidPrice);
         }
+        if let Err(err) = enforce_price_floor(&env, &asset, val) {
+            panic_with_error!(&env, err);
+        }
 
-        let storage = env.storage().persistent();
-        let mut prices: soroban_sdk::Map<Symbol, PriceData> = storage
-            .get(&DataKey::PriceData)
-            .unwrap_or_else(|| soroban_sdk::Map::new(&env));
-
-        let existing = prices.get(asset.clone());
+        let storage = env.storage().temporary();
+        let key = DataKey::VerifiedPrice(asset.clone());
+        let existing: Option<PriceData> = storage.get(&key);
         let is_new_asset = existing.is_none();
 
         track_asset(&env, asset.clone());
@@ -820,23 +811,15 @@ impl PriceOracle {
 
         if let Some(mut current) = existing {
             if current.price == val {
-                // Price unchanged — only refresh the timestamp to avoid a
-                // full storage write for the price field (zero-write optimisation).
+                // Price unchanged — only refresh the timestamp (zero-write optimisation).
                 current.timestamp = now;
-                prices.set(asset.clone(), current);
-                storage.set(&DataKey::PriceData, &prices);
-                log_event(&env, Symbol::new(&env, "price_updated"), asset.clone(), val);
-                env.events().publish_event(&PriceUpdatedEvent {
-                    asset: asset.clone(),
-                    price: val,
-                });
+                storage.set(&key, &current);
                 env.events().publish_event(&PriceUpdatedEvent { asset: asset.clone(), price: val });
                 log_event(&env, Symbol::new(&env, "price_updated"), asset, val);
                 return;
             }
         }
 
-        // Price changed (or first write) — store the full entry.
         let price_data = PriceData {
             price: val,
             timestamp: now,
@@ -846,14 +829,11 @@ impl PriceOracle {
             ttl,
         };
 
-        prices.set(asset.clone(), price_data);
-        storage.set(&DataKey::PriceData, &prices);
+        storage.set(&key, &price_data);
 
         if is_new_asset {
-            env.events().publish_event(&AssetAddedEvent {
-                symbol: asset.clone(),
-            });
-            log_event(&env, Symbol::new(&env, "asset_added"), asset.clone(), val);
+            env.events().publish_event(&AssetAddedEvent { symbol: asset.clone() });
+            log_event(&env, Symbol::new(&env, "asset_added"), asset, val);
         } else {
             log_event(&env, Symbol::new(&env, "price_updated"), asset.clone(), val);
             env.events().publish_event(&PriceUpdatedEvent {
@@ -861,6 +841,48 @@ impl PriceOracle {
                 price: val,
             });
         }
+    }
+
+    /// Submit a community (unverified) price for an asset.
+    ///
+    /// Any caller may submit a price here; it is stored in the `CommunityPrice`
+    /// bucket and is never used by internal math or `get_price(_, true)`.
+    /// Consumers that explicitly opt-in can read it via `get_price(_, false)`.
+    pub fn submit_community_price(
+        env: Env,
+        source: Address,
+        asset: Symbol,
+        price: i128,
+        decimals: u32,
+        ttl: u64,
+    ) -> Result<(), Error> {
+        source.require_auth();
+
+        if !get_tracked_assets(&env).contains(&asset) {
+            return Err(Error::InvalidAssetSymbol);
+        }
+
+        if !is_valid(price) {
+            return Err(Error::InvalidPrice);
+        }
+
+        let now = env.ledger().timestamp();
+        let price_data = PriceData {
+            price,
+            timestamp: now,
+            provider: source,
+            decimals,
+            confidence_score: 0,
+            ttl,
+        };
+
+        env.storage()
+            .temporary()
+            .set(&DataKey::CommunityPrice(asset.clone()), &price_data);
+
+        log_event(&env, Symbol::new(&env, "community_price"), asset, price);
+
+        Ok(())
     }
 
     /// Rescue tokens accidentally sent to this contract.
@@ -906,20 +928,17 @@ impl PriceOracle {
         crate::auth::_require_authorized(&env, &admin);
 
         let storage = env.storage().temporary();
-        let mut prices: soroban_sdk::Map<Symbol, PriceData> = storage
-            .get(&DataKey::PriceData)
-            .unwrap_or_else(|| soroban_sdk::Map::new(&env));
 
-        if !prices.contains_key(asset.clone()) {
+        // Asset must exist in at least the verified bucket
+        if storage.get::<DataKey, PriceData>(&DataKey::VerifiedPrice(asset.clone())).is_none() {
             return Err(Error::AssetNotFound);
         }
 
-        prices.remove(asset.clone());
-        storage.set(&DataKey::PriceData, &prices);
+        storage.remove(&DataKey::VerifiedPrice(asset.clone()));
+        storage.remove(&DataKey::CommunityPrice(asset.clone()));
 
-        let mut tracked = get_tracked_assets(&env);
         let mut updated_assets = soroban_sdk::Vec::new(&env);
-        for tracked_asset in tracked.iter() {
+        for tracked_asset in get_tracked_assets(&env).iter() {
             if tracked_asset != asset {
                 updated_assets.push_back(tracked_asset.clone());
             }
@@ -929,19 +948,9 @@ impl PriceOracle {
         Ok(())
     }
 
-    /// Remove a batch of assets atomically.
+    /// Update the price for a specific asset (authorized backend relayer function).
     ///
-    /// The full batch is rejected when more than 20 symbols are supplied, so
-    /// no storage is mutated before the resource-limit guard passes.
-    pub fn clear_assets(env: Env, assets: soroban_sdk::Vec<Symbol>) -> Result<(), Error> {
-        clear_assets_from_storage(&env, assets)
-    }
-
-    /// Update the price for a specific asset (authorized backend relayer function)
-    /// 
-    /// This function appends the price to a buffer instead of overwriting.
-    /// Multiple relayers can submit prices for the same ledger, and the median
-    /// will be calculated from all unique submissions.
+    /// Writes to the `VerifiedPrice` bucket. Only whitelisted providers may call this.
     pub fn update_price(
         env: Env,
         source: Address,
@@ -977,14 +986,12 @@ impl PriceOracle {
             return Err(Error::AlreadyInitialized);
         }
         let storage = env.storage().temporary();
-        let mut prices: soroban_sdk::Map<Symbol, PriceData> = storage
-            .get(&DataKey::PriceData)
-            .unwrap_or_else(|| soroban_sdk::Map::new(&env));
+        let key = DataKey::VerifiedPrice(asset.clone());
+        let old_price: i128 = storage
+            .get::<DataKey, PriceData>(&key)
+            .map(|pd| pd.price)
+            .unwrap_or(0);
 
-        // Get the old median price for anomaly detection
-        let old_price = calculate_median_from_buffer(&env, &buffer).unwrap_or(0);
-
-        // Flash crash protection: reject if price change exceeds MAX_PERCENT_CHANGE
         if old_price > 0 {
             if let Some(pct_change_bps) = calculate_percentage_difference_bps(old_price, price) {
                 if pct_change_bps > MAX_PERCENT_CHANGE_BPS {
@@ -1005,6 +1012,8 @@ impl PriceOracle {
                 // Still allow the submission even if anomaly detected
             }
         }
+
+        enforce_price_floor(&env, &asset, price)?;
 
         let storage = env.storage().persistent();
         let bounds_map: soroban_sdk::Map<Symbol, PriceBounds> = storage
@@ -1047,17 +1056,40 @@ impl PriceOracle {
             ttl,
         };
 
-        prices.set(asset.clone(), price_data);
-        storage.set(&DataKey::PriceData, &prices);
+        storage.set(&key, &price_data);
 
-        env.events().publish_event(&PriceUpdatedEvent { 
-            asset: asset.clone(), 
-            price: median_price 
-        });
-
-        log_event(&env, Symbol::new(&env, "price_updated"), asset, median_price);
+        env.events().publish_event(&PriceUpdatedEvent { asset: asset.clone(), price });
+        log_event(&env, Symbol::new(&env, "price_updated"), asset, price);
 
         Ok(())
+    }
+
+    /// Set an absolute floor price for an asset.
+    pub fn set_price_floor(env: Env, admin: Address, asset: Symbol, price_floor: i128) {
+        admin.require_auth();
+        crate::auth::_require_authorized(&env, &admin);
+
+        assert!(price_floor > 0, "price_floor must be positive");
+
+        if let Some(bounds) = Self::get_price_bounds(env.clone(), asset.clone()) {
+            assert!(
+                price_floor <= bounds.max_price,
+                "price_floor must be <= max_price"
+            );
+        }
+
+        let storage = env.storage().persistent();
+        let mut floor_map: soroban_sdk::Map<Symbol, i128> = storage
+            .get(&DataKey::PriceFloorData)
+            .unwrap_or_else(|| soroban_sdk::Map::new(&env));
+
+        floor_map.set(asset, price_floor);
+        storage.set(&DataKey::PriceFloorData, &floor_map);
+    }
+
+    /// Get the configured absolute floor price for an asset, if any.
+    pub fn get_price_floor(env: Env, asset: Symbol) -> Option<i128> {
+        read_price_floor(&env, &asset)
     }
 
     /// Set the min/max price bounds for an asset.
@@ -1074,8 +1106,11 @@ impl PriceOracle {
 
         assert!(min_price > 0 && max_price > 0, "bounds must be positive");
         assert!(min_price <= max_price, "min_price must be <= max_price");
+        if let Some(price_floor) = read_price_floor(&env, &asset) {
+            assert!(price_floor <= max_price, "price_floor must be <= max_price");
+        }
 
-        let storage = env.storage().temporary();
+        let storage = env.storage().persistent();
         let mut bounds_map: soroban_sdk::Map<Symbol, PriceBounds> = storage
             .get(&DataKey::PriceBoundsData)
             .unwrap_or_else(|| soroban_sdk::Map::new(&env));
@@ -1094,7 +1129,7 @@ impl PriceOracle {
     pub fn get_price_bounds(env: Env, asset: Symbol) -> Option<PriceBounds> {
         let bounds_map: soroban_sdk::Map<Symbol, PriceBounds> = env
             .storage()
-            .temporary()
+            .persistent()
             .get(&DataKey::PriceBoundsData)
             .unwrap_or_else(|| soroban_sdk::Map::new(&env));
         bounds_map.get(asset)
@@ -1147,19 +1182,19 @@ impl PriceOracle {
     /// # Returns
     /// The new pause state (true = paused, false = unpaused)
     pub fn toggle_pause(env: Env, admin1: Address, admin2: Address) -> Result<bool, Error> {
-        _require_not_destroyed(&env);
-        // Require both admins to provide cryptographic signatures
-        admin1.require_auth();
-        admin2.require_auth();
-
-        // Verify both are distinct addresses
+        // Verify both are distinct addresses before requiring auth
         if admin1 == admin2 {
             return Err(Error::MultiSigValidationFailed);
         }
 
+        // Require both admins to provide cryptographic signatures
+        admin1.require_auth();
+        admin2.require_auth();
+
         // Verify both are authorized admins
-        crate::auth::_require_authorized(&env, &admin1);
-        crate::auth::_require_authorized(&env, &admin2);
+        if !crate::auth::_is_authorized(&env, &admin1) || !crate::auth::_is_authorized(&env, &admin2) {
+            return Err(Error::NotAuthorized);
+        }
 
         // Get current admin list
         let admins = crate::auth::_get_admin(&env);
@@ -1194,19 +1229,19 @@ impl PriceOracle {
     /// # Returns
     /// Ok(()) if successful, Error if validation fails
     pub fn register_admin(env: Env, admin1: Address, admin2: Address, new_admin: Address) -> Result<(), Error> {
-        _require_not_destroyed(&env);
-        // Require both existing admins to provide cryptographic signatures
-        admin1.require_auth();
-        admin2.require_auth();
-
-        // Verify both are distinct addresses
+        // Verify both are distinct addresses before requiring auth
         if admin1 == admin2 {
             return Err(Error::MultiSigValidationFailed);
         }
 
+        // Require both existing admins to provide cryptographic signatures
+        admin1.require_auth();
+        admin2.require_auth();
+
         // Verify both are authorized admins
-        crate::auth::_require_authorized(&env, &admin1);
-        crate::auth::_require_authorized(&env, &admin2);
+        if !crate::auth::_is_authorized(&env, &admin1) || !crate::auth::_is_authorized(&env, &admin2) {
+            return Err(Error::NotAuthorized);
+        }
 
         // Get current admin list
         let admins = crate::auth::_get_admin(&env);
@@ -1239,19 +1274,19 @@ impl PriceOracle {
     /// # Returns
     /// Ok(()) if successful, Error if validation fails
     pub fn remove_admin(env: Env, admin1: Address, admin2: Address, admin_to_remove: Address) -> Result<(), Error> {
-        _require_not_destroyed(&env);
-        // Require both existing admins to provide cryptographic signatures
-        admin1.require_auth();
-        admin2.require_auth();
-
-        // Verify both are distinct addresses
+        // Verify both are distinct addresses before requiring auth
         if admin1 == admin2 {
             return Err(Error::MultiSigValidationFailed);
         }
 
+        // Require both existing admins to provide cryptographic signatures
+        admin1.require_auth();
+        admin2.require_auth();
+
         // Verify both are authorized admins
-        crate::auth::_require_authorized(&env, &admin1);
-        crate::auth::_require_authorized(&env, &admin2);
+        if !crate::auth::_is_authorized(&env, &admin1) || !crate::auth::_is_authorized(&env, &admin2) {
+            return Err(Error::NotAuthorized);
+        }
 
         // Get current admin list
         let admins = crate::auth::_get_admin(&env);

@@ -1,6 +1,6 @@
 {
   "generators": {
-    "address": 1,
+    "address": 3,
     "nonce": 0,
     "mux_id": 0
   },
@@ -20,82 +20,6 @@
     "min_temp_entry_ttl": 16,
     "max_entry_ttl": 6312000,
     "ledger_entries": [
-      {
-        "entry": {
-          "last_modified_ledger_seq": 0,
-          "data": {
-            "contract_data": {
-              "ext": "v0",
-              "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
-              "key": {
-                "vec": [
-                  {
-                    "symbol": "VerifiedPrice"
-                  },
-                  {
-                    "symbol": "KES"
-                  }
-                ]
-              },
-              "durability": "temporary",
-              "val": {
-                "map": [
-                  {
-                    "key": {
-                      "symbol": "confidence_score"
-                    },
-                    "val": {
-                      "u32": 100
-                    }
-                  },
-                  {
-                    "key": {
-                      "symbol": "decimals"
-                    },
-                    "val": {
-                      "u32": 2
-                    }
-                  },
-                  {
-                    "key": {
-                      "symbol": "price"
-                    },
-                    "val": {
-                      "i128": "800"
-                    }
-                  },
-                  {
-                    "key": {
-                      "symbol": "provider"
-                    },
-                    "val": {
-                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM"
-                    }
-                  },
-                  {
-                    "key": {
-                      "symbol": "timestamp"
-                    },
-                    "val": {
-                      "u64": "0"
-                    }
-                  },
-                  {
-                    "key": {
-                      "symbol": "ttl"
-                    },
-                    "val": {
-                      "u64": "14400"
-                    }
-                  }
-                ]
-              }
-            }
-          },
-          "ext": "v0"
-        },
-        "live_until": 15
-      },
       {
         "entry": {
           "last_modified_ledger_seq": 0,
@@ -129,7 +53,7 @@
                       "symbol": "decimals"
                     },
                     "val": {
-                      "u32": 2
+                      "u32": 6
                     }
                   },
                   {
@@ -137,7 +61,7 @@
                       "symbol": "price"
                     },
                     "val": {
-                      "i128": "1500"
+                      "i128": "1000000"
                     }
                   },
                   {
@@ -191,6 +115,22 @@
                       "key": {
                         "vec": [
                           {
+                            "symbol": "Admin"
+                          }
+                        ]
+                      },
+                      "val": {
+                        "vec": [
+                          {
+                            "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "key": {
+                        "vec": [
+                          {
                             "symbol": "BaseCurrencyPairs"
                           }
                         ]
@@ -199,11 +139,23 @@
                         "vec": [
                           {
                             "symbol": "NGN"
-                          },
-                          {
-                            "symbol": "KES"
                           }
                         ]
+                      }
+                    },
+                    {
+                      "key": {
+                        "vec": [
+                          {
+                            "symbol": "Provider"
+                          },
+                          {
+                            "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                          }
+                        ]
+                      },
+                      "val": {
+                        "bool": true
                       }
                     },
                     {
@@ -216,42 +168,6 @@
                       },
                       "val": {
                         "vec": [
-                          {
-                            "map": [
-                              {
-                                "key": {
-                                  "symbol": "asset"
-                                },
-                                "val": {
-                                  "symbol": "KES"
-                                }
-                              },
-                              {
-                                "key": {
-                                  "symbol": "event_type"
-                                },
-                                "val": {
-                                  "symbol": "asset_added"
-                                }
-                              },
-                              {
-                                "key": {
-                                  "symbol": "price"
-                                },
-                                "val": {
-                                  "i128": "800"
-                                }
-                              },
-                              {
-                                "key": {
-                                  "symbol": "timestamp"
-                                },
-                                "val": {
-                                  "u64": "0"
-                                }
-                              }
-                            ]
-                          },
                           {
                             "map": [
                               {
@@ -275,7 +191,7 @@
                                   "symbol": "price"
                                 },
                                 "val": {
-                                  "i128": "1500"
+                                  "i128": "1000000"
                                 }
                               },
                               {
